@@ -6,10 +6,8 @@ namespace Cube7Bridge;
 public sealed class VirtualLaserCubeConfig
 {
     public bool Enabled { get; set; } = true;
-    // The external UDP responder is diagnostic/test-only on a machine running LaserOS,
-    // because LaserOS itself may bind the LaserCube command port. The injected hook is primary.
-    public bool NetworkServerEnabled { get; set; } = false;
-    public string BindAddress { get; set; } = "0.0.0.0";
+    public bool NetworkServerEnabled { get; set; } = true;
+    public string BindAddress { get; set; } = "127.0.0.1";
     public int AlivePort { get; set; } = 45456;
     public int CommandPort { get; set; } = 45457;
     public int DataPort { get; set; } = 45458;
@@ -78,8 +76,6 @@ public static class VirtualLaserCubeProtocol
 
         switch (payload[0])
         {
-            // libLaserdockCore discovery: request is one byte 0x27 on alive port;
-            // response must be exactly 27 00 before LaserOS constructs a network device.
             case 0x27:
                 return new VirtualLaserCubeReply([0x27, 0x00], "get_alive");
             case 0x77:
