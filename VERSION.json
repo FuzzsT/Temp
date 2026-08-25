@@ -1,8 +1,10 @@
 {
   "name": "Cube7-LaserOS-FullBridge",
-  "version": "0.3.3",
-  "release": "AUTH-TRACE",
+  "version": "0.4.0",
+  "release": "RENDERER-TAP-DRYRUN",
   "architecture": "win-x64",
+  "laser_os_verified_sha256": "21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c",
+  "physical_output_default": false,
   "required_runtime_files": [
     "bin/Cube7Bridge.exe",
     "bin/Cube7Injector.exe",
