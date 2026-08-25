@@ -11,8 +11,9 @@ public static class SelfTest
         try
         {
             ProtocolModelTests();
+            BluetoothAddressTests();
             await UdpServerTestsAsync();
-            Console.WriteLine("SELFTEST PASS: protocol + UDP virtual device; physical-output=DISABLED");
+            Console.WriteLine("SELFTEST PASS: protocol + UDP virtual device + BLE target parser; physical-output=DISABLED");
             return 0;
         }
         catch (Exception ex)
@@ -52,6 +53,14 @@ public static class SelfTest
         Require(ra9.PointCount == 2, "0xA9 point count");
         Require(ra9.Response is { Length: 3 } && ra9.Response[0] == 0xA9, "0xA9 buffer response");
         Require(state.LastMessageNumber == 0x12 && state.LastFrameNumber == 0x34, "0xA9 sequence tracking");
+    }
+
+    private static void BluetoothAddressTests()
+    {
+        const string expected = "E4:66:E5:D2:6E:38";
+        ulong parsed = BridgeConfig.ParseBluetoothAddress(expected);
+        Require(parsed == 0xE466E5D26E38UL, "BLE exact MAC parse");
+        Require(BridgeConfig.FormatBluetoothAddress(parsed) == expected, "BLE exact MAC round-trip");
     }
 
     private static async Task UdpServerTestsAsync()
