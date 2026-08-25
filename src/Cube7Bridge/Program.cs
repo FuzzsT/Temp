@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.6.0";
+    private const string Version = "0.6.1";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -25,16 +25,18 @@ internal static class Program
         status.Set("AUTH_B0_B1", "WAITING", "no auth traffic observed");
         status.Set("RENDERER_TAP", "WAITING", "no renderer frames observed");
         status.Set("CUBE7_BLE", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "target not scanned yet");
-        status.Set("BLE_PROTOCOL", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "candidate FFE1 trace not started");
+        status.Set("BLE_TRANSPORT", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "unpaired/uncached transport not started");
+        status.Set("BLE_SESSION", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "official 0xAB/0x8B session not started");
+        status.Set("BLE_PROTOCOL", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "official FFE1 session not started");
         status.Set("VIRTUAL_DEVICE", cfg.VirtualDevice.Enabled ? "ARMED" : "DISABLED", $"network={cfg.VirtualDevice.Network} usbHid={cfg.VirtualDevice.UsbHid}");
         status.Set("LOOPBACK_SERVER", "WAITING", "not started yet");
         status.Set("USB_HID_TRACE", cfg.VirtualDevice.UsbHid.Equals("trace-first", StringComparison.OrdinalIgnoreCase) ? "ARMED" : "DISABLED", "passive trace-first model");
         status.Set("TRANSLATOR", "DRY-RUN", "normalized frames only; no device writes");
         status.Set("PHYSICAL_OUTPUT", "DISABLED", "hard safety invariant");
 
-        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} LOOPBACK-AUTOCONFIG");
-        Console.WriteLine("Real localhost LaserCube UDP server + injected Winsock loopback routing + renderer preview + passive USB/HID trace model.");
-        Console.WriteLine("Physical CUBE output is DISABLED; no BLE vendor payload writes, no synthetic authentication and no interlock/E-stop bypass.");
+        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} BLE-SESSION-BRIDGE");
+        Console.WriteLine("Real localhost LaserCube UDP server + injected Winsock loopback routing + official unpaired/uncached CUBE BLE session on FFE1.");
+        Console.WriteLine("Physical CUBE output is DISABLED; arbitrary BLE control writes, synthetic authentication and interlock/E-stop bypass are disabled. Only the source-confirmed 0xAB session-connect write is permitted by the BLE session runtime.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
         if (cfg.VirtualDevice.PhysicalOutput || cfg.AllowBleWrites || cfg.VirtualDevice.AllowSyntheticAuthentication)
