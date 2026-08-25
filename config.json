@@ -21,7 +21,7 @@
     "automaticSupportBundle": true
   },
   "virtualLaserCube": {
-    "enabled": true,
+    "enabled": false,
     "networkServerEnabled": false,
     "bindAddress": "0.0.0.0",
     "alivePort": 45456,
