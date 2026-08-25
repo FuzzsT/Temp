@@ -30,7 +30,7 @@
     "writeRendererPreview": true
   },
   "virtualLaserCube": {
-    "enabled": false,
+    "enabled": true,
     "networkServerEnabled": false,
     "bindAddress": "0.0.0.0",
     "alivePort": 45456,
@@ -42,7 +42,7 @@
     "maxDacRate": 30000,
     "bufferSize": 6000,
     "modelNumber": 7,
-    "modelName": "LaserCube Virtual CUBE7"
+    "modelName": "Cube7 Virtual Test Device"
   },
   "ble": {
     "nameContains": ["CUBE", "Laserworld"],
