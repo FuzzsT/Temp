@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.4.1";
+    private const string Version = "0.4.2";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -25,12 +25,13 @@ internal static class Program
         status.Set("AUTH_B0_B1", "WAITING", "no auth traffic observed");
         status.Set("RENDERER_TAP", "WAITING", "no renderer frames observed");
         status.Set("CUBE7_BLE", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "target not scanned yet");
+        status.Set("BLE_PROTOCOL", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "candidate FFE1 trace not started");
         status.Set("TRANSLATOR", "DRY-RUN", "normalized frames only; no device writes");
         status.Set("PHYSICAL_OUTPUT", "DISABLED", "hard safety invariant");
 
-        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} HARDENED-DRYRUN");
-        Console.WriteLine("Renderer tap + preflight + pipeline status + safe support bundle.");
-        Console.WriteLine("Physical CUBE output is DISABLED; no BLE payload writes and no interlock/E-stop bypass.");
+        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} BLE-UART-PROTOCOL-TRACE");
+        Console.WriteLine("Renderer tap + verified LaserOS preflight + passive FFE1 candidate protocol trace.");
+        Console.WriteLine("Physical CUBE output is DISABLED; no BLE vendor payload writes and no interlock/E-stop bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
         LaserOsPreflightResult preflight = new(string.Empty, false, cfg.Preflight.ExpectedLaserOsSha256, null, false, "SKIPPED", "LaserOS preflight not required for this mode");
