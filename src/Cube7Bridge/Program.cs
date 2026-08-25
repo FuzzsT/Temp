@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.4.1";
+    private const string Version = "0.5.0";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -28,8 +28,8 @@ internal static class Program
         status.Set("TRANSLATOR", "DRY-RUN", "normalized frames only; no device writes");
         status.Set("PHYSICAL_OUTPUT", "DISABLED", "hard safety invariant");
 
-        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} HARDENED-DRYRUN");
-        Console.WriteLine("Renderer tap + preflight + pipeline status + safe support bundle.");
+        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} REV-B-CONTROL-CENTER");
+        Console.WriteLine("Renderer watchdog + lazy capture + diagnostic discovery profile + Control Center.");
         Console.WriteLine("Physical CUBE output is DISABLED; no BLE payload writes and no interlock/E-stop bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
@@ -76,7 +76,7 @@ internal static class Program
 
                 ConfigureVirtualMarker(markerPath, cfg.VirtualLaserCube.Enabled);
                 if (cfg.VirtualLaserCube.Enabled)
-                    Console.WriteLine("[virtual] optional injected responder armed for LaserCube UDP 45456/45457/45458");
+                    Console.WriteLine("[virtual] DIAGNOSTIC responder armed for LaserCube UDP 45456/45457/45458; physical-output=DISABLED");
                 else
                     Console.WriteLine("[renderer] virtual LaserCube disabled; renderer tap operates independently of Projector Setup device state.");
 
@@ -173,7 +173,7 @@ internal static class Program
         try
         {
             if (enabled)
-                File.WriteAllText(markerPath, $"FullBridge {Version} virtual LaserCube; physical-output=DISABLED\n");
+                File.WriteAllText(markerPath, $"FullBridge {Version} virtual LaserCube diagnostic responder; physical-output=DISABLED\n");
             else if (File.Exists(markerPath))
                 File.Delete(markerPath);
         }
