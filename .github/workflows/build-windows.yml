@@ -18,6 +18,9 @@ jobs:
       - name: Self-test hardened dry-run pipeline
         shell: powershell
         run: .\bin\Cube7Bridge.exe --self-test
+      - name: Rev B regression tests
+        shell: powershell
+        run: dotnet run --project .\src\Cube7Bridge.RevBTests\Cube7Bridge.RevBTests.csproj -c Release
       - name: Verify required native + managed binaries
         shell: powershell
         run: .\verify-release.ps1 -BinDir .\bin
