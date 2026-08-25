@@ -6,11 +6,14 @@ public sealed class HookCaptureServer
 {
     private readonly CaptureWriter _writer;
     private readonly LaserCubeHandshakeTracker _handshake;
+    private readonly RendererFrameCapture _renderer;
+    private long _rendererFrames;
 
     public HookCaptureServer(CaptureWriter writer)
     {
         _writer = writer;
         _handshake = new LaserCubeHandshakeTracker(writer.DirectoryPath);
+        _renderer = new RendererFrameCapture(writer.DirectoryPath);
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -24,6 +27,8 @@ public sealed class HookCaptureServer
             await pipe.WaitForConnectionAsync(ct);
             Console.WriteLine("[hook] connected");
             Console.WriteLine($"[stage] handshake summary: {Path.Combine(_writer.DirectoryPath, "handshake-summary.ndjson")}");
+            Console.WriteLine($"[renderer] frame summary: {_renderer.SummaryPath}");
+            Console.WriteLine("[renderer] tap is capture-only; physical output remains OFF.");
             try
             {
                 var header = new byte[HookRecord.HeaderSize];
@@ -36,8 +41,17 @@ public sealed class HookCaptureServer
                     await ReadExactlyAsync(pipe, payload, ct);
                     var record = HookRecord.Parse(header, payload);
                     _writer.Write(record);
-                    Console.WriteLine($"[{(record.Direction == 1 ? "TX" : "RX")}] {record.RemoteAddress}:{record.Port} {record.Payload.Length}B {Describe(record)}");
 
+                    if (RendererFrameDecoder.TryDecode(record, out var frame) && frame is not null)
+                    {
+                        _renderer.Write(record, frame);
+                        long n = Interlocked.Increment(ref _rendererFrames);
+                        if (n <= 5 || n % 60 == 0)
+                            Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X}");
+                        continue;
+                    }
+
+                    Console.WriteLine($"[{(record.Direction == 1 ? "TX" : "RX")}] {record.RemoteAddress}:{record.Port} {record.Payload.Length}B {Describe(record)}");
                     string? transition = _handshake.Observe(record);
                     if (transition is not null)
                         Console.WriteLine(transition);
@@ -50,6 +64,7 @@ public sealed class HookCaptureServer
 
     private static string Describe(HookRecord r)
     {
+        if (r.Api == RendererFrameDecoder.RendererFrameApi) return "RENDER_FRAME";
         if (r.Payload.Length == 0) return "empty";
         return r.Payload[0] switch
         {
