@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.5.0";
+    private const string Version = "0.6.0";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -27,12 +27,13 @@ internal static class Program
         status.Set("CUBE7_BLE", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "target not scanned yet");
         status.Set("BLE_PROTOCOL", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "candidate FFE1 trace not started");
         status.Set("VIRTUAL_DEVICE", cfg.VirtualDevice.Enabled ? "ARMED" : "DISABLED", $"network={cfg.VirtualDevice.Network} usbHid={cfg.VirtualDevice.UsbHid}");
+        status.Set("LOOPBACK_SERVER", "WAITING", "not started yet");
         status.Set("USB_HID_TRACE", cfg.VirtualDevice.UsbHid.Equals("trace-first", StringComparison.OrdinalIgnoreCase) ? "ARMED" : "DISABLED", "passive trace-first model");
         status.Set("TRANSLATOR", "DRY-RUN", "normalized frames only; no device writes");
         status.Set("PHYSICAL_OUTPUT", "DISABLED", "hard safety invariant");
 
-        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} VIRTUAL-DEVICE-EMU");
-        Console.WriteLine("Injected virtual LaserCube network responder + renderer preview + passive USB/HID trace model.");
+        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} LOOPBACK-AUTOCONFIG");
+        Console.WriteLine("Real localhost LaserCube UDP server + injected Winsock loopback routing + renderer preview + passive USB/HID trace model.");
         Console.WriteLine("Physical CUBE output is DISABLED; no BLE vendor payload writes, no synthetic authentication and no interlock/E-stop bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
@@ -85,26 +86,42 @@ internal static class Program
                 captureServer = new HookCaptureServer(writer, status, rendererStats, cfg.Hardening.WriteDryRunTranslation, cfg.VirtualDevice);
                 tasks.Add(captureServer.RunAsync(cts.Token));
 
-                bool armInjectedResponder = cfg.VirtualDevice.Enabled && cfg.VirtualDevice.Network && cfg.VirtualLaserCube.Enabled;
-                ConfigureVirtualMarker(markerPath, armInjectedResponder);
-                if (armInjectedResponder)
-                    Console.WriteLine("[virtual] injected responder armed for LaserCube UDP 45456/45457/45458; physical-output=OFF");
-                else
-                    Console.WriteLine("[renderer] injected virtual LaserCube disabled; renderer tap remains available independently.");
+                bool loopbackRequested = cfg.VirtualDevice.Enabled && cfg.VirtualDevice.Network && cfg.VirtualLaserCube.Enabled && cfg.VirtualLaserCube.NetworkServerEnabled;
+                var loopbackPlan = loopbackRequested
+                    ? LoopbackRuntimePlan.From(cfg.VirtualLaserCube)
+                    : new LoopbackRuntimePlan(false, false, false);
 
-                if (armInjectedResponder && cfg.VirtualLaserCube.NetworkServerEnabled)
+                if (loopbackPlan.StartExternalServer)
                 {
-                    Console.WriteLine("[virtual] external UDP responder enabled (diagnostic mode)");
+                    // RunAsync binds all three sockets synchronously before its first incomplete await,
+                    // so the real localhost server is listening before the injection profile is armed.
                     var networkServer = new VirtualLaserCubeServer(cfg.VirtualLaserCube, writer.DirectoryPath);
                     tasks.Add(networkServer.RunAsync(cts.Token));
+                    status.Set("LOOPBACK_SERVER", "OK", $"{cfg.VirtualLaserCube.BindAddress}:{cfg.VirtualLaserCube.AlivePort}/{cfg.VirtualLaserCube.CommandPort}/{cfg.VirtualLaserCube.DataPort}");
+                    Console.WriteLine($"[loopback] real UDP server ready at {cfg.VirtualLaserCube.BindAddress} ports={cfg.VirtualLaserCube.AlivePort}/{cfg.VirtualLaserCube.CommandPort}/{cfg.VirtualLaserCube.DataPort}");
                 }
+                else
+                {
+                    status.Set("LOOPBACK_SERVER", "DISABLED", "virtual network server disabled by config");
+                }
+
+                LoopbackInjectionProfile? profile = loopbackPlan.WriteInjectionProfile
+                    ? LoopbackInjectionProfile.From(cfg.VirtualLaserCube)
+                    : null;
+                ConfigureInjectionProfile(markerPath, profile);
+
+                if (profile is { Enabled: true })
+                    Console.WriteLine("[loopback] injection profile armed: destination rewrite + client bind collision avoidance; in-process protocol responder=OFF");
+                else
+                    Console.WriteLine("[loopback] injection profile disabled; renderer/network tracing remains available.");
 
                 if (cfg.AutoInject && !StartInjector(cfg))
                     status.Set("LASEROS_HOOK", "ERROR", "injector could not be started");
             }
             else
             {
-                ConfigureVirtualMarker(markerPath, false);
+                ConfigureInjectionProfile(markerPath, null);
+                status.Set("LOOPBACK_SERVER", "SKIPPED", "BLE-only mode");
             }
 
             if (mode is "full" or "ble")
@@ -129,7 +146,7 @@ internal static class Program
         }
         finally
         {
-            ConfigureVirtualMarker(markerPath, false);
+            ConfigureInjectionProfile(markerPath, null);
             captureServer?.Dispose();
             writer?.Dispose();
 
@@ -180,19 +197,20 @@ internal static class Program
         }
     }
 
-    private static void ConfigureVirtualMarker(string markerPath, bool enabled)
+    private static void ConfigureInjectionProfile(string markerPath, LoopbackInjectionProfile? profile)
     {
         try
         {
-            if (enabled)
-                File.WriteAllText(markerPath, $"FullBridge {Version} virtual LaserCube; physical-output=DISABLED\n");
+            if (profile is { Enabled: true })
+                File.WriteAllText(markerPath, profile.Serialize());
             else if (File.Exists(markerPath))
                 File.Delete(markerPath);
         }
         catch (Exception ex)
         {
-            if (enabled) throw new IOException($"Cannot arm virtual LaserCube marker '{markerPath}': {ex.Message}", ex);
-            Console.WriteLine($"[virtual] marker cleanup warning: {ex.Message}");
+            if (profile is { Enabled: true })
+                throw new IOException($"Cannot arm loopback injection profile '{markerPath}': {ex.Message}", ex);
+            Console.WriteLine($"[loopback] profile cleanup warning: {ex.Message}");
         }
     }
 
@@ -213,7 +231,7 @@ internal static class Program
 
             if (running is not null && cfg.EarlyHook.RestartRunningLaserOs && !string.IsNullOrWhiteSpace(launchPath))
             {
-                Console.WriteLine($"[early] LaserOS already running PID={running.Id}; restarting gracefully so renderer imports are hooked before startup.");
+                Console.WriteLine($"[early] LaserOS already running PID={running.Id}; restarting gracefully so network/renderer imports are hooked before startup.");
                 bool closed = GracefullyClose(running, cfg.EarlyHook.GracefulCloseTimeoutSeconds);
                 running.Dispose();
                 running = null;
@@ -230,7 +248,7 @@ internal static class Program
             }
             else if (running is null && !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath))
             {
-                Console.WriteLine($"[early] LaserOS is not running; launching with renderer hook before startup: {launchPath}");
+                Console.WriteLine($"[early] LaserOS is not running; launching with network/renderer hook before startup: {launchPath}");
                 if (StartEarlyInjector(injector, dll, launchPath)) return true;
                 Console.WriteLine("[early] early-launch failed; falling back to process watcher.");
             }
