@@ -37,12 +37,14 @@ public sealed record VirtualLaserCubeReply(byte[]? Response, string Kind, int Po
 
 public static class VirtualLaserCubeProtocol
 {
-    private static readonly byte[] Serial = [0x43, 0x37, 0x56, 0x30, 0x30, 0x33]; // C7V003
+    private static readonly byte[] Serial = [0x43, 0x37, 0x56, 0x30, 0x30, 0x32]; // C7V002
 
     public static byte[] BuildFullInfo(VirtualLaserCubeConfig cfg, VirtualLaserCubeState state)
     {
         var response = new byte[64];
         response[0] = 0x77;
+        response[1] = 0x00; // command result: success
+        response[2] = 0x00; // full-info payload version used by libLaserdockCore
         response[3] = cfg.FirmwareMajor;
         response[4] = cfg.FirmwareMinor;
         response[5] = state.OutputRequested ? (byte)1 : (byte)0;
@@ -76,6 +78,10 @@ public static class VirtualLaserCubeProtocol
 
         switch (payload[0])
         {
+            // libLaserdockCore discovery: request is one byte 0x27 on alive port;
+            // response must be exactly 27 00 before LaserOS constructs a network device.
+            case 0x27:
+                return new VirtualLaserCubeReply([0x27, 0x00], "get_alive");
             case 0x77:
                 return new VirtualLaserCubeReply(BuildFullInfo(cfg, state), "get_full_info");
             case 0x78:
