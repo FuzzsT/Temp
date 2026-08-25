@@ -286,6 +286,17 @@ static int WSAAPI Hook_recv(SOCKET s, char* buf, int len, int flags) {
     return r;
 }
 
+static WORD WinsockOrdinalForName(const char* procName) {
+    // Classic Winsock 2 exports are commonly imported by ordinal by MSVC.
+    // These values are stable WS2_32 ordinals: recv=16, recvfrom=17,
+    // send=19, sendto=20. Newer WSA* routines are normally imported by name.
+    if (strcmp(procName, "recv") == 0) return 16;
+    if (strcmp(procName, "recvfrom") == 0) return 17;
+    if (strcmp(procName, "send") == 0) return 19;
+    if (strcmp(procName, "sendto") == 0) return 20;
+    return 0;
+}
+
 static bool PatchIAT(HMODULE module, const char* importedDll, const char* procName, void* hook, void** original) {
     if (!module) return false;
     auto* base = reinterpret_cast<uint8_t*>(module);
@@ -304,9 +315,16 @@ static bool PatchIAT(HMODULE module, const char* importedDll, const char* procNa
         auto* firstThunk = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->FirstThunk);
         auto* origThunk = desc->OriginalFirstThunk ? reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk) : firstThunk;
         for (; origThunk->u1.AddressOfData; ++origThunk, ++firstThunk) {
-            if (IMAGE_SNAP_BY_ORDINAL(origThunk->u1.Ordinal)) continue;
-            auto* byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + origThunk->u1.AddressOfData);
-            if (strcmp(reinterpret_cast<const char*>(byName->Name), procName) != 0) continue;
+            bool matches = false;
+            if (IMAGE_SNAP_BY_ORDINAL(origThunk->u1.Ordinal)) {
+                const WORD expected = WinsockOrdinalForName(procName);
+                const WORD actual = static_cast<WORD>(IMAGE_ORDINAL(origThunk->u1.Ordinal));
+                matches = expected != 0 && actual == expected;
+            } else {
+                auto* byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + origThunk->u1.AddressOfData);
+                matches = strcmp(reinterpret_cast<const char*>(byName->Name), procName) == 0;
+            }
+            if (!matches) continue;
 
             DWORD oldProtect = 0;
             if (!VirtualProtect(&firstThunk->u1.Function, sizeof(uintptr_t), PAGE_READWRITE, &oldProtect)) return false;

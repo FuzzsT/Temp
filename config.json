@@ -4,6 +4,12 @@
   "traceOnly": true,
   "allowBleWrites": false,
   "captureDirectory": "captures",
+  "earlyHook": {
+    "enabled": true,
+    "restartRunningLaserOs": true,
+    "gracefulCloseTimeoutSeconds": 10,
+    "laserOsExePath": null
+  },
   "virtualLaserCube": {
     "enabled": true,
     "networkServerEnabled": false,
