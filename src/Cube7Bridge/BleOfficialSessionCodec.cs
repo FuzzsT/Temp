@@ -237,6 +237,15 @@ public static class BleOfficialSessionCodec
             throw new InvalidOperationException($"unsupported dataFormatType: {session.DataFormatType}");
     }
 
+    public static BleCryptoContext DeriveSessionCrypto(BleConnectSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ValidateSession(session);
+        if (session.ActivateType == 1)
+            return new BleCryptoContext(Fixed16Ascii(session.DeviceSecret), Fixed16Ascii(session.DeviceKey));
+        return new BleCryptoContext(Fixed16Ascii(session.ProductKey), Fixed16Ascii(session.ProductKey));
+    }
+
     private static byte[] AesCtr(byte[] data, BleCryptoContext context)
     {
         if (data.Length == 0) return [];
@@ -276,6 +285,12 @@ public static class BleOfficialSessionCodec
         byte[] output = new byte[length];
         raw.CopyTo(output, 0);
         return output;
+    }
+
+    private static byte[] Fixed16Ascii(string value)
+    {
+        string source = (value ?? string.Empty) + new string('0', 16);
+        return Encoding.Latin1.GetBytes(source[..16]);
     }
 
     private static string DecodeField(byte[] raw) => Encoding.Latin1.GetString(raw).Replace("\0", string.Empty);
