@@ -25,15 +25,15 @@ $tmpCmd = Join-Path $env:TEMP ("cube7-native-{0}.cmd" -f [guid]::NewGuid().ToStr
 call "$dev" -arch=$Arch -host_arch=x64
 if errorlevel 1 exit /b %errorlevel%
 cd /d "$root"
-cl /nologo /std:c++17 /EHsc /O2 /Fe:"$selfTestOut" VirtualLaserCubeSelfTest.cpp
+cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$selfTestOut" VirtualLaserCubeSelfTest.cpp
 if errorlevel 1 exit /b %errorlevel%
 "$selfTestOut"
 if errorlevel 1 exit /b %errorlevel%
-cl /nologo /std:c++17 /EHsc /O2 /LD /Fe:"$dllOut" LaserOSHook.cpp Ws2_32.lib
+cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /LD /Fe:"$dllOut" LaserOSHook.cpp Ws2_32.lib
 if errorlevel 1 exit /b %errorlevel%
-cl /nologo /std:c++17 /EHsc /O2 /Fe:"$exeOut" Injector.cpp
+cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$exeOut" Injector.cpp
 if errorlevel 1 exit /b %errorlevel%
-cl /nologo /std:c++17 /EHsc /O2 /Fe:"$probeOut" LaserOSEarlyHookProbe.cpp Ws2_32.lib
+cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$probeOut" LaserOSEarlyHookProbe.cpp Ws2_32.lib
 if errorlevel 1 exit /b %errorlevel%
 echo ==== EARLYHOOK PROBE IMPORTS ====
 dumpbin /nologo /imports "$probeOut"
