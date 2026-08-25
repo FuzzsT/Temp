@@ -49,17 +49,23 @@ public static class RendererFrameDecoder
 
 public sealed class RendererFrameCapture : IDisposable
 {
-    private readonly StreamWriter _summary;
-    private readonly FileStream _raw;
+    private StreamWriter? _summary;
+    private FileStream? _raw;
     private readonly object _sync = new();
     public string SummaryPath { get; }
     public string RawPath { get; }
+    public bool HasFrames => _summary is not null;
 
     public RendererFrameCapture(string directory)
     {
         Directory.CreateDirectory(directory);
         SummaryPath = Path.Combine(directory, "renderer-frames.ndjson");
         RawPath = Path.Combine(directory, "renderer-frames.bin");
+    }
+
+    private void EnsureOpen()
+    {
+        if (_summary is not null) return;
         _summary = new StreamWriter(new FileStream(SummaryPath, FileMode.Create, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
         _raw = new FileStream(RawPath, FileMode.Create, FileAccess.Write, FileShare.Read);
     }
@@ -68,7 +74,8 @@ public sealed class RendererFrameCapture : IDisposable
     {
         lock (_sync)
         {
-            long rawOffset = _raw.Position;
+            EnsureOpen();
+            long rawOffset = _raw!.Position;
             Span<byte> length = stackalloc byte[4];
             BinaryPrimitives.WriteUInt32LittleEndian(length, (uint)record.Payload.Length);
             _raw.Write(length);
@@ -87,13 +94,13 @@ public sealed class RendererFrameCapture : IDisposable
                 rawLength = record.Payload.Length,
                 preview
             };
-            _summary.WriteLine(JsonSerializer.Serialize(row));
+            _summary!.WriteLine(JsonSerializer.Serialize(row));
         }
     }
 
     public void Dispose()
     {
-        _summary.Dispose();
-        _raw.Dispose();
+        _summary?.Dispose();
+        _raw?.Dispose();
     }
 }
