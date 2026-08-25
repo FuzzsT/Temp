@@ -18,7 +18,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _startBridge = startBridge;
-        RuntimePathText.Text = $"Runtime: {ResolveBridgePath()}";
+        string bridge = ResolveBridgePath();
+        RuntimePathText.Text = $"Runtime: {bridge}\nProfile: {ResolveConfigPath(bridge)}";
         Closed += (_, _) => StopOwnedBridge();
         Loaded += (_, _) =>
         {
@@ -38,7 +39,10 @@ public partial class MainWindow : Window
 
     private string ResolveConfigPath(string bridgePath)
     {
-        string besideBridge = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(bridgePath)!, "config.json");
+        string directory = System.IO.Path.GetDirectoryName(bridgePath)!;
+        string diagnostic = System.IO.Path.Combine(directory, "config.diagnostic.json");
+        if (File.Exists(diagnostic)) return diagnostic;
+        string besideBridge = System.IO.Path.Combine(directory, "config.json");
         if (File.Exists(besideBridge)) return besideBridge;
         return System.IO.Path.Combine(AppContext.BaseDirectory, "config.json");
     }
@@ -81,7 +85,7 @@ public partial class MainWindow : Window
             _bridge.Start();
             _bridge.BeginOutputReadLine();
             _bridge.BeginErrorReadLine();
-            FooterStatus.Text = $"Bridge PID={_bridge.Id}";
+            FooterStatus.Text = $"Diagnostic bridge PID={_bridge.Id}; virtual discovery only, physical output disabled";
         }
         catch (Exception ex)
         {
