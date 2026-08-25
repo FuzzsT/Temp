@@ -2,7 +2,7 @@ name: build-windows
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, fullbridge-0.3.0 ]
+    branches: [ main, master, fullbridge-0.3.0, fullbridge-0.3.2 ]
 
 jobs:
   build-x64:
