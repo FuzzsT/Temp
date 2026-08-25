@@ -12,6 +12,7 @@ public sealed class BleScanner
     private readonly BridgeConfig.BleConfig _cfg;
     private readonly PipelineStatus? _status;
     private readonly ConcurrentDictionary<ulong, string> _seen = new();
+    private readonly string _captureDirectory;
     private readonly string _logPath;
     private readonly object _logLock = new();
 
@@ -19,6 +20,7 @@ public sealed class BleScanner
     {
         _cfg = cfg;
         _status = status;
+        _captureDirectory = captureDirectory;
         Directory.CreateDirectory(captureDirectory);
         _logPath = Path.Combine(captureDirectory, $"ble-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");
     }
@@ -87,6 +89,13 @@ public sealed class BleScanner
 
     private async Task EnumerateGattAsync(ulong address, CancellationToken ct)
     {
+        using var protocolTrace = new BleUartTraceWriter(_captureDirectory);
+        protocolTrace.WriteCandidate("community-candidate-ping", 0x09, []);
+        protocolTrace.WriteCandidate("community-candidate-output-off", 0x04, [0x00]);
+        _status?.Set("BLE_PROTOCOL", "TRACE", $"{BleUartCandidateProtocol.Profile.Name} confidence={BleUartCandidateProtocol.Profile.Confidence} transmit=DISABLED");
+        Console.WriteLine($"[ble-proto] profile={BleUartCandidateProtocol.Profile.Name} confidence={BleUartCandidateProtocol.Profile.Confidence} transmit=DISABLED");
+        Console.WriteLine($"[ble-proto] trace={protocolTrace.Path}");
+
         string addressText = BridgeConfig.FormatBluetoothAddress(address);
         Console.WriteLine($"[ble] connecting {addressText}...");
         using var dev = await BluetoothLEDevice.FromBluetoothAddressAsync(address);
@@ -133,9 +142,11 @@ public sealed class BleScanner
                         var rr = await ch.ReadValueAsync(BluetoothCacheMode.Uncached);
                         if (rr.Status == GattCommunicationStatus.Success)
                         {
-                            var hex = ToHex(rr.Value);
+                            byte[] data = ToBytes(rr.Value);
+                            var hex = Convert.ToHexString(data);
                             Console.WriteLine($"[gatt]     READ {hex}");
                             Log(new { type = "read", timeUtc = DateTime.UtcNow, service = service.Uuid, uuid = ch.Uuid, value = hex });
+                            if (IsCandidateNotifyCharacteristic(ch.Uuid)) protocolTrace.ObserveNotification(data);
                         }
                         else
                             Console.WriteLine($"[gatt]     READ status={rr.Status}");
@@ -147,9 +158,11 @@ public sealed class BleScanner
                 {
                     ch.ValueChanged += (_, e) =>
                     {
-                        var hex = ToHex(e.CharacteristicValue);
+                        byte[] data = ToBytes(e.CharacteristicValue);
+                        var hex = Convert.ToHexString(data);
                         Console.WriteLine($"[gatt]     NOTIFY {ch.Uuid} {hex}");
                         Log(new { type = "notify", timeUtc = DateTime.UtcNow, service = service.Uuid, uuid = ch.Uuid, value = hex });
+                        if (IsCandidateNotifyCharacteristic(ch.Uuid)) protocolTrace.ObserveNotification(data);
                     };
                     var mode = props.HasFlag(GattCharacteristicProperties.Notify)
                         ? GattClientCharacteristicConfigurationDescriptorValue.Notify
@@ -169,11 +182,16 @@ public sealed class BleScanner
         try { await Task.Delay(Timeout.Infinite, ct); } catch (OperationCanceledException) { }
     }
 
-    private static string ToHex(IBuffer b)
+    private static bool IsCandidateNotifyCharacteristic(Guid uuid) =>
+        string.Equals(uuid.ToString(), BleUartCandidateProtocol.Profile.NotifyCharacteristic, StringComparison.OrdinalIgnoreCase);
+
+    private static byte[] ToBytes(IBuffer b)
     {
         using var reader = DataReader.FromBuffer(b);
         var data = new byte[(int)b.Length];
         reader.ReadBytes(data);
-        return Convert.ToHexString(data);
+        return data;
     }
+
+    private static string ToHex(IBuffer b) => Convert.ToHexString(ToBytes(b));
 }
