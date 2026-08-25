@@ -107,6 +107,12 @@ static bool LaunchSuspendedAndInject(const std::wstring& exePath, const std::wst
         return false;
     }
 
+    // LoadLibrary returns before LaserOSHook's worker thread is guaranteed to finish
+    // its first IAT patch pass. Keep the primary target thread suspended long enough
+    // for that first pass, so startup discovery cannot race ahead of the hook.
+    Sleep(1200);
+    std::wcout << L"[early] hook settle barrier complete\n";
+
     DWORD previousSuspend = ResumeThread(pi.hThread);
     if (previousSuspend == static_cast<DWORD>(-1)) {
         std::wcerr << L"[early] ResumeThread failed err=" << GetLastError() << L"\n";
