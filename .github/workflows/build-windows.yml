@@ -2,7 +2,7 @@ name: build-windows
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, fullbridge-0.3.0, fullbridge-0.3.2, fullbridge-0.3.3-auth-trace, fullbridge-0.4.0-renderer-tap, fullbridge-0.4.1-hardened-dryrun, fullbridge-0.4.2-ble-uart-trace, fullbridge-0.5.0-virtual-device-emu, fullbridge-0.6.0-loopback-autoconfig ]
+    branches: [ main, master, fullbridge-0.3.0, fullbridge-0.3.2, fullbridge-0.3.3-auth-trace, fullbridge-0.4.0-renderer-tap, fullbridge-0.4.1-hardened-dryrun, fullbridge-0.4.2-ble-uart-trace, fullbridge-0.5.0-virtual-device-emu, fullbridge-0.6.0-loopback-autoconfig, fullbridge-0.6.1-ble-session-bridge ]
 
 jobs:
   build-x64:
