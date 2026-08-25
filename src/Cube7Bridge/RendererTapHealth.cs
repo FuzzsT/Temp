@@ -57,7 +57,7 @@ public sealed class RendererTapHealthWriter
     public RendererTapHealthWriter(string directory)
     {
         Directory.CreateDirectory(directory);
-        _path = Path.Combine(directory, "renderer-hook-health.json");
+        _path = System.IO.Path.Combine(directory, "renderer-hook-health.json");
     }
 
     public string Path => _path;
