@@ -2,18 +2,21 @@ using System.IO.Pipes;
 
 namespace Cube7Bridge;
 
-public sealed class HookCaptureServer
+public sealed class HookCaptureServer : IDisposable
 {
     private readonly CaptureWriter _writer;
     private readonly LaserCubeHandshakeTracker _handshake;
     private readonly RendererFrameCapture _renderer;
+    private readonly CubeFormat3Capture _format3;
     private long _rendererFrames;
+    private bool _disposed;
 
     public HookCaptureServer(CaptureWriter writer)
     {
         _writer = writer;
         _handshake = new LaserCubeHandshakeTracker(writer.DirectoryPath);
         _renderer = new RendererFrameCapture(writer.DirectoryPath);
+        _format3 = new CubeFormat3Capture(writer.DirectoryPath);
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -28,6 +31,8 @@ public sealed class HookCaptureServer
             Console.WriteLine("[hook] connected");
             Console.WriteLine($"[stage] handshake summary: {Path.Combine(_writer.DirectoryPath, "handshake-summary.ndjson")}");
             Console.WriteLine($"[renderer] frame summary: {_renderer.SummaryPath}");
+            Console.WriteLine($"[format3] dry-run summary: {_format3.SummaryPath}");
+            Console.WriteLine($"[format3] dry-run binary: {_format3.RawPath}");
             Console.WriteLine("[renderer] tap is capture-only; physical output remains OFF.");
             try
             {
@@ -45,9 +50,10 @@ public sealed class HookCaptureServer
                     if (RendererFrameDecoder.TryDecode(record, out var frame) && frame is not null)
                     {
                         _renderer.Write(record, frame);
+                        _format3.Write(frame, blackout: false);
                         long n = Interlocked.Increment(ref _rendererFrames);
                         if (n <= 5 || n % 60 == 0)
-                            Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X}");
+                            Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X} format3=dry-run");
                         continue;
                     }
 
@@ -93,5 +99,13 @@ public sealed class HookCaptureServer
             if (n == 0) throw new EndOfStreamException();
             pos += n;
         }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _renderer.Dispose();
+        _format3.Dispose();
     }
 }
