@@ -2,22 +2,30 @@ using System.IO.Pipes;
 
 namespace Cube7Bridge;
 
-public sealed class HookCaptureServer
+public sealed class HookCaptureServer : IDisposable
 {
     private readonly CaptureWriter _writer;
     private readonly LaserCubeHandshakeTracker _handshake;
     private readonly RendererFrameCapture _renderer;
+    private readonly PipelineStatus _status;
+    private readonly RendererFrameStatistics _stats;
+    private readonly DryRunTranslationCapture? _translation;
     private long _rendererFrames;
 
-    public HookCaptureServer(CaptureWriter writer)
+    public HookCaptureServer(CaptureWriter writer, PipelineStatus status, RendererFrameStatistics stats, bool writeDryRunTranslation)
     {
         _writer = writer;
+        _status = status;
+        _stats = stats;
         _handshake = new LaserCubeHandshakeTracker(writer.DirectoryPath);
         _renderer = new RendererFrameCapture(writer.DirectoryPath);
+        if (writeDryRunTranslation)
+            _translation = new DryRunTranslationCapture(writer.DirectoryPath);
     }
 
     public async Task RunAsync(CancellationToken ct)
     {
+        _status.Set("LASEROS_HOOK", "WAITING", "waiting for injected hook pipe");
         while (!ct.IsCancellationRequested)
         {
             await using var pipe = new NamedPipeServerStream(
@@ -26,8 +34,11 @@ public sealed class HookCaptureServer
             Console.WriteLine("[hook] waiting for LaserOSHook.dll...");
             await pipe.WaitForConnectionAsync(ct);
             Console.WriteLine("[hook] connected");
+            _status.Set("LASEROS_HOOK", "OK", "LaserOSHook.dll connected");
             Console.WriteLine($"[stage] handshake summary: {Path.Combine(_writer.DirectoryPath, "handshake-summary.ndjson")}");
             Console.WriteLine($"[renderer] frame summary: {_renderer.SummaryPath}");
+            if (_translation is not null)
+                Console.WriteLine($"[translator] dry-run summary: {_translation.Path}");
             Console.WriteLine("[renderer] tap is capture-only; physical output remains OFF.");
             try
             {
@@ -45,21 +56,55 @@ public sealed class HookCaptureServer
                     if (RendererFrameDecoder.TryDecode(record, out var frame) && frame is not null)
                     {
                         _renderer.Write(record, frame);
+                        _stats.Observe(frame);
+                        var normalized = DryRunTranslator.Translate(frame);
+                        _translation?.Write(normalized);
                         long n = Interlocked.Increment(ref _rendererFrames);
+                        var snap = _stats.Snapshot();
+                        _status.Set("RENDERER_TAP", "OK", $"frames={snap.Frames} rate={frame.Rate}pps points={frame.PointCount} max={snap.MaxPoints}");
+                        _status.Set("TRANSLATOR", "DRY-RUN", $"normalized={normalized.PointCount} physical-output=OFF");
                         if (n <= 5 || n % 60 == 0)
-                            Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X}");
+                            Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X} normalized={normalized.PointCount}");
                         continue;
                     }
 
                     Console.WriteLine($"[{(record.Direction == 1 ? "TX" : "RX")}] {record.RemoteAddress}:{record.Port} {record.Payload.Length}B {Describe(record)}");
                     string? transition = _handshake.Observe(record);
                     if (transition is not null)
+                    {
                         Console.WriteLine(transition);
+                        UpdateHandshakeStatus(transition);
+                    }
                 }
             }
-            catch (EndOfStreamException) { }
-            catch (IOException ex) { Console.WriteLine($"[hook] disconnected: {ex.Message}"); }
+            catch (EndOfStreamException)
+            {
+                _status.Set("LASEROS_HOOK", "DISCONNECTED", "hook pipe closed");
+            }
+            catch (IOException ex)
+            {
+                _status.Set("LASEROS_HOOK", "ERROR", ex.Message);
+                Console.WriteLine($"[hook] disconnected: {ex.Message}");
+            }
         }
+    }
+
+    private void UpdateHandshakeStatus(string transition)
+    {
+        if (transition.Contains("DISCOVERY_REQUEST", StringComparison.Ordinal))
+            _status.Set("DISCOVERY_0x27", "ACTIVE", "request observed");
+        if (transition.Contains("DISCOVERY_ACCEPTED", StringComparison.Ordinal))
+            _status.Set("DISCOVERY_0x27", "OK", "27 00 accepted");
+        if (transition.Contains("FULL_INFO_REQUEST", StringComparison.Ordinal))
+            _status.Set("FULL_INFO_0x77", "ACTIVE", "request observed");
+        if (transition.Contains("FULL_INFO_ACCEPTED", StringComparison.Ordinal))
+            _status.Set("FULL_INFO_0x77", "OK", "64-byte response accepted");
+        if (transition.Contains("AUTH_REQUEST", StringComparison.Ordinal))
+            _status.Set("AUTH_B0_B1", "ACTIVE", "B0/B1 handshake observed");
+        if (transition.Contains("AUTH_RESPONSE_CAPTURED", StringComparison.Ordinal))
+            _status.Set("AUTH_B0_B1", "CAPTURED", "response captured; LaserOS validation pending");
+        if (transition.Contains("POST_AUTH_DEVICE_TRAFFIC", StringComparison.Ordinal))
+            _status.Set("AUTH_B0_B1", "OK", "post-auth device traffic observed");
     }
 
     private static string Describe(HookRecord r)
@@ -93,5 +138,11 @@ public sealed class HookCaptureServer
             if (n == 0) throw new EndOfStreamException();
             pos += n;
         }
+    }
+
+    public void Dispose()
+    {
+        _translation?.Dispose();
+        _renderer.Dispose();
     }
 }
