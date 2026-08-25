@@ -42,11 +42,18 @@ public sealed class HookCaptureServer
         if (r.Payload.Length == 0) return "empty";
         return r.Payload[0] switch
         {
+            0x27 => r.Payload.Length == 2 && r.Payload[1] == 0 ? "GET_ALIVE RESPONSE" : "GET_ALIVE",
             0x77 => "GET_FULL_INFO",
             0x78 => "BUFFER_RESPONSE",
             0x80 => "SET_OUTPUT",
+            0x82 => "SET_ILDA_RATE",
             0x8A => "RINGBUFFER_QUERY",
+            0x8D => "CLEAR_RINGBUFFER",
+            0x9A => "SAMPLE_DATA_COMPRESSED",
+            0xA0 => "SET_BUFFER_THRESHOLD",
             0xA9 => $"SAMPLE_DATA ({Math.Max(0, (r.Payload.Length - 4) / 10)} pts)",
+            0xB0 => "SECURITY_REQUEST",
+            0xB1 => "SECURITY_RESPONSE",
             _ => $"op=0x{r.Payload[0]:X2}"
         };
     }
