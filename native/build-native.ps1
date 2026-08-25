@@ -13,10 +13,11 @@ if (!(Test-Path $dev)) { throw 'VsDevCmd.bat not found.' }
 
 $dllOut = Join-Path $out 'LaserOSHook.dll'
 $exeOut = Join-Path $out 'Cube7Injector.exe'
+$virtualMarker = Join-Path $out 'VirtualLaserCube.enabled'
 $selfTestOut = Join-Path $env:TEMP ("Cube7NativeSelfTest-{0}.exe" -f [guid]::NewGuid().ToString('N'))
 $probeOut = Join-Path $env:TEMP ("LaserOSEarlyHookProbe-{0}.exe" -f [guid]::NewGuid().ToString('N'))
 $probePass = Join-Path $env:TEMP ("LaserOSEarlyHookProbe-{0}.pass" -f [guid]::NewGuid().ToString('N'))
-Remove-Item $dllOut,$exeOut,$selfTestOut,$probeOut,$probePass -Force -ErrorAction SilentlyContinue
+Remove-Item $dllOut,$exeOut,$virtualMarker,$selfTestOut,$probeOut,$probePass -Force -ErrorAction SilentlyContinue
 $env:CUBE7_EARLYHOOK_PASSFILE = $probePass
 
 $tmpCmd = Join-Path $env:TEMP ("cube7-native-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
@@ -39,7 +40,7 @@ echo ==== EARLYHOOK PROBE IMPORTS ====
 dumpbin /nologo /imports "$probeOut"
 if errorlevel 1 exit /b %errorlevel%
 echo ==== END EARLYHOOK PROBE IMPORTS ====
-copy /y nul "$out\VirtualLaserCube.enabled" >nul
+copy /y nul "$virtualMarker" >nul
 "$exeOut" --launch "$probeOut" --dll "$dllOut" --once
 if errorlevel 1 exit /b %errorlevel%
 if not exist "$probePass" (
@@ -54,7 +55,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Native build failed: $LASTEXITCODE" }
 }
 finally {
-    Remove-Item $tmpCmd,$selfTestOut,$probeOut,$probePass -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmpCmd,$selfTestOut,$probeOut,$probePass,$virtualMarker -Force -ErrorAction SilentlyContinue
     Remove-Item Env:CUBE7_EARLYHOOK_PASSFILE -ErrorAction SilentlyContinue
 }
 
@@ -68,7 +69,11 @@ if ($missing.Count -gt 0) {
     Get-ChildItem -Path $out -Force | Format-Table Name,Length,FullName -AutoSize
     throw ("Native build reported success but output is missing: " + ($missing -join ', '))
 }
+if (Test-Path $virtualMarker) {
+    throw 'Native build leaked VirtualLaserCube.enabled into release output.'
+}
 
 Write-Host ("[OK] LaserOSHook.dll: {0} bytes" -f (Get-Item $dllOut).Length)
 Write-Host ("[OK] Cube7Injector.exe: {0} bytes" -f (Get-Item $exeOut).Length)
+Write-Host '[OK] VirtualLaserCube.enabled probe marker cleaned from runtime output.'
 Write-Host "Built native runtime: $out"
