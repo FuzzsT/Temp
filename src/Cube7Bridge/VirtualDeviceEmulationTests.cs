@@ -4,6 +4,10 @@ public static class VirtualDeviceEmulationTests
 {
     public static void Run()
     {
+        var loopbackDefaults = new VirtualLaserCubeConfig();
+        Require(loopbackDefaults.NetworkServerEnabled, "real localhost UDP server must be enabled by default");
+        Require(loopbackDefaults.BindAddress == "127.0.0.1", "real UDP server must bind loopback only");
+
         var cfg = new BridgeConfig.VirtualDeviceConfig
         {
             Enabled = true,
