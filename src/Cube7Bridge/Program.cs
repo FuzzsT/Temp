@@ -11,7 +11,7 @@ internal static class Program
         string configPath = args.FirstOrDefault(a => a.StartsWith("--config="))?.Split('=', 2)[1] ?? "config.json";
         var cfg = BridgeConfig.Load(configPath);
 
-        Console.WriteLine("Cube7 LaserOS Full Bridge 0.1.0");
+        Console.WriteLine("Cube7 LaserOS Full Bridge 0.2.0");
         Console.WriteLine("Trace-first build: no BLE characteristic writes and no interlock bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
@@ -54,7 +54,7 @@ internal static class Program
         var dll = Path.Combine(AppContext.BaseDirectory, "LaserOSHook.dll");
         if (!File.Exists(exe) || !File.Exists(dll))
         {
-            Console.WriteLine("[inject] native binaries missing. Build native/ first or place Cube7Injector.exe + LaserOSHook.dll next to Cube7Bridge.exe.");
+            Console.WriteLine("[inject] FATAL: FullBridge package is incomplete: Cube7Injector.exe or LaserOSHook.dll is missing next to Cube7Bridge.exe.");
             return;
         }
         try
