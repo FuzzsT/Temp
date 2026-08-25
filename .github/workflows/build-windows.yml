@@ -15,16 +15,28 @@ jobs:
       - name: Build FullBridge
         shell: powershell
         run: .\build.ps1 -Arch x64 -Publish
-      - name: Self-test virtual device emulator
+      - name: Self-test loopback virtual device runtime
         shell: powershell
         run: .\bin\Cube7Bridge.exe --self-test
       - name: Verify required native + managed binaries
         shell: powershell
         run: .\verify-release.ps1 -BinDir .\bin
+      - name: Verify 0.6.0 loopback defaults
+        shell: powershell
+        run: |
+          $cfg = Get-Content .\config.json -Raw | ConvertFrom-Json
+          if (-not $cfg.virtualLaserCube.networkServerEnabled) { throw 'networkServerEnabled must default to true' }
+          if ($cfg.virtualLaserCube.bindAddress -ne '127.0.0.1') { throw 'bindAddress must default to 127.0.0.1' }
+          if ($cfg.allowBleWrites) { throw 'allowBleWrites must remain false' }
+          if ($cfg.virtualDevice.physicalOutput) { throw 'physicalOutput must remain false' }
+          if ($cfg.virtualDevice.allowSyntheticAuthentication) { throw 'allowSyntheticAuthentication must remain false' }
+          $version = Get-Content .\VERSION.json -Raw | ConvertFrom-Json
+          if ($version.version -ne '0.6.0') { throw 'VERSION.json must be 0.6.0' }
+          if ($version.release -ne 'LOOPBACK-AUTOCONFIG') { throw 'VERSION release mismatch' }
       - name: Stage ready-to-run package
         shell: powershell
         run: |
-          $stage = '.\release\Cube7-LaserOS-FullBridge-0.5.0-VIRTUAL-DEVICE-EMU-win-x64'
+          $stage = '.\release\Cube7-LaserOS-FullBridge-0.6.0-LOOPBACK-AUTOCONFIG-win-x64'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item .\bin (Join-Path $stage 'bin') -Recurse -Force
           Copy-Item .\start-full.cmd,.\start-trace.cmd,.\start-ble.cmd,.\README.md,.\config.json,.\VERSION.json -Destination $stage -Force
@@ -32,16 +44,20 @@ jobs:
           Copy-Item .\protocols (Join-Path $stage 'protocols') -Recurse -Force
           Copy-Item .\scripts (Join-Path $stage 'scripts') -Recurse -Force
           Copy-Item .\verify-release.ps1 (Join-Path $stage 'verify-release.ps1') -Force
-          Compress-Archive -Path "$stage\*" -DestinationPath Cube7-LaserOS-FullBridge-0.5.0-VIRTUAL-DEVICE-EMU-win-x64.zip -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath Cube7-LaserOS-FullBridge-0.6.0-LOOPBACK-AUTOCONFIG-win-x64.zip -Force
       - name: Verify packaged ZIP contents
         shell: powershell
         run: |
           $tmp = Join-Path $env:RUNNER_TEMP 'fullbridge-verify'
           if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-          Expand-Archive .\Cube7-LaserOS-FullBridge-0.5.0-VIRTUAL-DEVICE-EMU-win-x64.zip -DestinationPath $tmp
+          Expand-Archive .\Cube7-LaserOS-FullBridge-0.6.0-LOOPBACK-AUTOCONFIG-win-x64.zip -DestinationPath $tmp
           .\verify-release.ps1 -BinDir (Join-Path $tmp 'bin')
+          $cfg = Get-Content (Join-Path $tmp 'config.json') -Raw | ConvertFrom-Json
+          if (-not $cfg.virtualLaserCube.networkServerEnabled -or $cfg.virtualLaserCube.bindAddress -ne '127.0.0.1') {
+            throw 'Packaged config lost loopback defaults'
+          }
       - uses: actions/upload-artifact@v4
         with:
-          name: Cube7-LaserOS-FullBridge-0.5.0-VIRTUAL-DEVICE-EMU-win-x64
-          path: Cube7-LaserOS-FullBridge-0.5.0-VIRTUAL-DEVICE-EMU-win-x64.zip
+          name: Cube7-LaserOS-FullBridge-0.6.0-LOOPBACK-AUTOCONFIG-win-x64
+          path: Cube7-LaserOS-FullBridge-0.6.0-LOOPBACK-AUTOCONFIG-win-x64.zip
           if-no-files-found: error
