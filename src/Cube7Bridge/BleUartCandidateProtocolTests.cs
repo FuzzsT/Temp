@@ -37,11 +37,16 @@ public static class BleUartCandidateProtocolTests
         Directory.CreateDirectory(root);
         try
         {
-            using var trace = new BleUartTraceWriter(root);
-            trace.ObserveNotification(ping);
-            trace.ObserveNotification(new byte[244]);
-            Require(File.Exists(trace.Path), "BLE UART trace file created");
-            string text = File.ReadAllText(trace.Path);
+            string tracePath;
+            using (var trace = new BleUartTraceWriter(root))
+            {
+                trace.ObserveNotification(ping);
+                trace.ObserveNotification(new byte[244]);
+                tracePath = trace.Path;
+                Require(File.Exists(tracePath), "BLE UART trace file created");
+            }
+
+            string text = File.ReadAllText(tracePath);
             Require(text.Contains("checksumValid") && text.Contains("idle-zero-buffer"), "BLE UART trace classification");
         }
         finally
