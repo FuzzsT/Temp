@@ -1,7 +1,7 @@
 {
   "name": "Cube7-LaserOS-FullBridge",
-  "version": "0.4.1",
-  "release": "HARDENED-DRYRUN",
+  "version": "0.5.0",
+  "release": "REV-B-CONTROL-CENTER",
   "architecture": "win-x64",
   "laser_os_verified_sha256": "21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c",
   "physical_output_default": false,
@@ -9,14 +9,20 @@
   "features": [
     "verified-laseros-preflight",
     "pipeline-status",
+    "renderer-watchdog",
+    "lazy-renderer-capture",
+    "diagnostic-virtual-discovery-profile",
     "renderer-statistics",
     "cube7-normalized-dryrun-translator",
-    "automatic-safe-support-bundle"
+    "automatic-safe-support-bundle",
+    "wpf-control-center"
   ],
   "required_runtime_files": [
+    "Cube7ControlCenter.exe",
     "bin/Cube7Bridge.exe",
     "bin/Cube7Injector.exe",
     "bin/LaserOSHook.dll",
-    "bin/config.json"
+    "bin/config.json",
+    "bin/config.diagnostic.json"
   ]
 }
