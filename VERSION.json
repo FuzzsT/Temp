@@ -1,10 +1,37 @@
 {
   "name": "Cube7-LaserOS-FullBridge",
   "version": "0.4.0",
-  "release": "RENDERER-TAP-DRYRUN",
+  "release": "RENDERER-TAP-FORMAT3-OFFICIAL-TRANSPORT-DRYRUN",
   "architecture": "win-x64",
   "laser_os_verified_sha256": "21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c",
-  "physical_output_default": false,
+  "cube_runtime_profile": {
+    "address": "E4:66:E5:D2:6E:38",
+    "name": "BLEAPP_C77D_V217",
+    "firmware": "2.1.7",
+    "gatt_fingerprint": "270f018cab0fb6e4f2121b7588f68306bfb366510de2dc594ce606469419787a",
+    "buffer_max": 244,
+    "data_format_type": 3,
+    "official_io_characteristic": "0000ffe1-0000-1000-8000-00805f9b34fb"
+  },
+  "features": {
+    "renderer_tap": true,
+    "format3_translation": true,
+    "palette_entries": 250,
+    "official_plaintext_transport_serializer": true,
+    "official_aes_ctr_known_vector_verified": true,
+    "live_vendor_ble_writes": false,
+    "physical_output_default": false,
+    "automatic_output_enable": false,
+    "interlock_bypass": false
+  },
+  "capture_artifacts": [
+    "renderer-frames.ndjson",
+    "renderer-frames.bin",
+    "cube-format3.ndjson",
+    "cube-format3.bin",
+    "cube-transport-plaintext.ndjson",
+    "cube-transport-plaintext.bin"
+  ],
   "required_runtime_files": [
     "bin/Cube7Bridge.exe",
     "bin/Cube7Injector.exe",
