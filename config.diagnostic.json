@@ -1,0 +1,44 @@
+{
+  "laserOsProcessName": "LaserOS.exe",
+  "autoInject": true,
+  "traceOnly": true,
+  "allowBleWrites": false,
+  "captureDirectory": "captures",
+  "earlyHook": {
+    "enabled": true,
+    "restartRunningLaserOs": true,
+    "gracefulCloseTimeoutSeconds": 10,
+    "laserOsExePath": "C:\\Program Files\\LaserOS\\LaserOS.exe"
+  },
+  "preflight": {
+    "enabled": true,
+    "requireVerifiedSha256": true,
+    "expectedLaserOsSha256": "21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c"
+  },
+  "hardening": {
+    "statusIntervalSeconds": 5,
+    "writeDryRunTranslation": true,
+    "automaticSupportBundle": true
+  },
+  "virtualLaserCube": {
+    "enabled": true,
+    "networkServerEnabled": false,
+    "bindAddress": "0.0.0.0",
+    "alivePort": 45456,
+    "commandPort": 45457,
+    "dataPort": 45458,
+    "firmwareMajor": 1,
+    "firmwareMinor": 0,
+    "dacRate": 30000,
+    "maxDacRate": 30000,
+    "bufferSize": 6000,
+    "modelNumber": 7,
+    "modelName": "LaserCube Virtual CUBE7 DIAGNOSTIC"
+  },
+  "ble": {
+    "nameContains": ["CUBE", "Laserworld"],
+    "autoConnect": true,
+    "subscribeNotifications": true,
+    "address": "E4:66:E5:D2:6E:38"
+  }
+}
