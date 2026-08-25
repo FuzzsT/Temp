@@ -8,6 +8,9 @@ internal static class VirtualDeviceTestBootstrap
     internal static void Initialize()
     {
         if (Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--self-test", StringComparison.OrdinalIgnoreCase)))
+        {
             VirtualDeviceEmulationTests.Run();
+            BleOfficialSessionTests.Run();
+        }
     }
 }
