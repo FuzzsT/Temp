@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Reflection;
 using Cube7Bridge;
 
@@ -56,4 +57,41 @@ var repeated = new RendererFrame(30000, 0, 0x5678, [new RendererPoint(0, 0, 0x00
 var repeatedConverted = translate.Invoke(null, [repeated, false])!;
 Require((int)repeatedConverted.GetType().GetProperty("PointCount")!.GetValue(repeatedConverted)! == 3, "renderer repeat count must be expanded");
 
-Console.WriteLine("FORMAT3 CONTRACT PASS: Cube.zip palette=250, 6-byte type3 records, renderer repeat expansion, dry-run only");
+// RED contract for automatic dry-run capture artifacts.
+var captureType = asm.GetType("Cube7Bridge.CubeFormat3Capture");
+Require(captureType is not null, "CubeFormat3Capture type is missing");
+var ctor = captureType!.GetConstructor([typeof(string)]);
+Require(ctor is not null, "CubeFormat3Capture(string) constructor is missing");
+var write = captureType.GetMethod("Write", BindingFlags.Public | BindingFlags.Instance, [typeof(RendererFrame), typeof(bool)]);
+Require(write is not null, "CubeFormat3Capture.Write(RendererFrame,bool) is missing");
+
+var tempDir = Path.Combine(Path.GetTempPath(), "cube7-format3-contract-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(tempDir);
+try
+{
+    var capture = ctor!.Invoke([tempDir]);
+    write!.Invoke(capture, [frame, false]);
+    (capture as IDisposable)?.Dispose();
+
+    var rawPath = Path.Combine(tempDir, "cube-format3.bin");
+    var ndjsonPath = Path.Combine(tempDir, "cube-format3.ndjson");
+    Require(File.Exists(rawPath), "cube-format3.bin was not created");
+    Require(File.Exists(ndjsonPath), "cube-format3.ndjson was not created");
+
+    var raw = File.ReadAllBytes(rawPath);
+    Require(raw.Length == 4 + payload.Length, "raw capture must contain one length-prefixed payload");
+    Require(BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan(0, 4)) == payload.Length, "raw length prefix mismatch");
+    Require(raw.AsSpan(4).SequenceEqual(payload), "raw dry-run payload differs from CubeFormat3Translator output");
+
+    var line = File.ReadLines(ndjsonPath).Single();
+    Require(line.Contains("\"pointCount\":2"), "ndjson pointCount missing");
+    Require(line.Contains("\"payloadLength\":14"), "ndjson payloadLength missing");
+    Require(line.Contains("\"dryRun\":true"), "ndjson must declare dryRun=true");
+    Require(line.Contains("\"physicalOutput\":false"), "ndjson must declare physicalOutput=false");
+}
+finally
+{
+    try { Directory.Delete(tempDir, true); } catch { }
+}
+
+Console.WriteLine("FORMAT3 CONTRACT PASS: Cube.zip palette=250, 6-byte type3 records, renderer repeat expansion, dry-run capture artifacts");
