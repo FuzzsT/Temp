@@ -8,7 +8,7 @@
     "enabled": true,
     "restartRunningLaserOs": true,
     "gracefulCloseTimeoutSeconds": 10,
-    "laserOsExePath": null
+    "laserOsExePath": "C:\\Program Files\\LaserOS\\LaserOS.exe"
   },
   "virtualLaserCube": {
     "enabled": true,
