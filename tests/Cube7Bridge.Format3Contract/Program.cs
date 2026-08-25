@@ -57,7 +57,6 @@ var repeated = new RendererFrame(30000, 0, 0x5678, [new RendererPoint(0, 0, 0x00
 var repeatedConverted = translate.Invoke(null, [repeated, false])!;
 Require((int)repeatedConverted.GetType().GetProperty("PointCount")!.GetValue(repeatedConverted)! == 3, "renderer repeat count must be expanded");
 
-// RED contract for automatic dry-run capture artifacts.
 var captureType = asm.GetType("Cube7Bridge.CubeFormat3Capture");
 Require(captureType is not null, "CubeFormat3Capture type is missing");
 var ctor = captureType!.GetConstructor([typeof(string)]);
@@ -94,4 +93,37 @@ finally
     try { Directory.Delete(tempDir, true); } catch { }
 }
 
-Console.WriteLine("FORMAT3 CONTRACT PASS: Cube.zip palette=250, 6-byte type3 records, renderer repeat expansion, dry-run capture artifacts");
+// RED contract for the v26-confirmed AD/A5/85 transport envelope.
+var official = asm.GetType("Cube7Bridge.CubeOfficialProtocol");
+Require(official is not null, "CubeOfficialProtocol type is missing");
+var buildTransfer = official!.GetMethod(
+    "BuildPatternTransferFrames",
+    BindingFlags.Public | BindingFlags.Static,
+    [typeof(byte[]), typeof(int), typeof(int), typeof(string), typeof(byte)]);
+Require(buildTransfer is not null, "CubeOfficialProtocol.BuildPatternTransferFrames is missing");
+
+var transferData = Enumerable.Range(0, 250).Select(i => (byte)i).ToArray();
+var transferFrames = (byte[][])buildTransfer!.Invoke(null, [transferData, 3, 100, "20260825123456", (byte)0])!;
+Require(transferFrames.Length > 1, "250 bytes with bufferMax=100 must require multiple frames");
+Require(transferFrames.All(f => f.Length <= 100), "every transport frame must obey bufferMax");
+Require(transferFrames[0][0] == 0xAD, "first transport frame must be 0xAD");
+Require(transferFrames[0][1] == 0x12 && transferFrames[0][2] == 0x34, "first transport frame address must be 0x1234");
+Require(BinaryPrimitives.ReadUInt16BigEndian(transferFrames[0].AsSpan(3, 2)) == transferFrames[0].Length - 5, "0xAD payload length field mismatch");
+Require(transferFrames[0][5] == 2 && transferFrames[0][6] == 2 && transferFrames[0][7] == 0 && transferFrames[0][8] == 3, "0xAD namespace must be REAL_TIME_PLAY/PLAY_START/option0/type3");
+Require(BinaryPrimitives.ReadUInt32BigEndian(transferFrames[0].AsSpan(9, 4)) == transferData.Length, "0xAD total data length mismatch");
+Require(transferFrames[0][13] == 1 && transferFrames[0][14] == 0, "0xAD layerCount/runArg mismatch");
+Require(transferFrames[0].Length - 47 == 53, "first chunk capacity must be bufferMax-47");
+Require(transferFrames.Skip(1).All(f => f[0] == 0xA5), "continuation frames must be 0xA5");
+Require(transferFrames.Skip(1).All(f => BinaryPrimitives.ReadUInt16BigEndian(f.AsSpan(3, 2)) == f.Length - 5), "0xA5 payload length field mismatch");
+Require((transferFrames[0].Length - 47) + transferFrames.Skip(1).Sum(f => f.Length - 5) == transferData.Length, "transport chunk payload bytes must reconstruct original data");
+
+var parseAck = official.GetMethod("ParseDataAck", BindingFlags.Public | BindingFlags.Static, [typeof(byte[])]);
+Require(parseAck is not null, "CubeOfficialProtocol.ParseDataAck is missing");
+var ack = parseAck!.Invoke(null, [new byte[] { 0x85, 0x12, 0x34, 0x00 }])!;
+var ackType = ack.GetType();
+Require((byte)ackType.GetProperty("Command")!.GetValue(ack)! == 0x85, "ACK command mismatch");
+Require((ushort)ackType.GetProperty("Address")!.GetValue(ack)! == 0x1234, "ACK address mismatch");
+Require((byte)ackType.GetProperty("Status")!.GetValue(ack)! == 0, "ACK status mismatch");
+Require((bool)ackType.GetProperty("IsSuccess")!.GetValue(ack)!, "ACK status 0 must be success");
+
+Console.WriteLine("FORMAT3 CONTRACT PASS: palette=250, type3=6B/point, dry-run artifacts, v26 AD/A5/85 envelope");
