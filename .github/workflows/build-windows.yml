@@ -24,7 +24,7 @@ jobs:
       - name: Stage ready-to-run package
         shell: powershell
         run: |
-          $stage = '.\release\Cube7-LaserOS-FullBridge-0.3.1-win-x64'
+          $stage = '.\release\Cube7-LaserOS-FullBridge-0.3.2-win-x64'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item .\bin (Join-Path $stage 'bin') -Recurse -Force
           Copy-Item .\start-full.cmd,.\start-trace.cmd,.\start-ble.cmd,.\README.md,.\config.json,.\VERSION.json -Destination $stage -Force
@@ -32,16 +32,16 @@ jobs:
           Copy-Item .\protocols (Join-Path $stage 'protocols') -Recurse -Force
           Copy-Item .\scripts (Join-Path $stage 'scripts') -Recurse -Force
           Copy-Item .\verify-release.ps1 (Join-Path $stage 'verify-release.ps1') -Force
-          Compress-Archive -Path "$stage\*" -DestinationPath Cube7-LaserOS-FullBridge-0.3.1-win-x64.zip -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath Cube7-LaserOS-FullBridge-0.3.2-win-x64.zip -Force
       - name: Verify packaged ZIP contents
         shell: powershell
         run: |
           $tmp = Join-Path $env:RUNNER_TEMP 'fullbridge-verify'
           if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-          Expand-Archive .\Cube7-LaserOS-FullBridge-0.3.1-win-x64.zip -DestinationPath $tmp
+          Expand-Archive .\Cube7-LaserOS-FullBridge-0.3.2-win-x64.zip -DestinationPath $tmp
           .\verify-release.ps1 -BinDir (Join-Path $tmp 'bin')
       - uses: actions/upload-artifact@v4
         with:
-          name: Cube7-LaserOS-FullBridge-0.3.1-win-x64
-          path: Cube7-LaserOS-FullBridge-0.3.1-win-x64.zip
+          name: Cube7-LaserOS-FullBridge-0.3.2-win-x64
+          path: Cube7-LaserOS-FullBridge-0.3.2-win-x64.zip
           if-no-files-found: error
