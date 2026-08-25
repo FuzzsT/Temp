@@ -1,7 +1,16 @@
+using System.Runtime.CompilerServices;
+
 namespace Cube7Bridge;
 
 public static class BleUartCandidateProtocolTests
 {
+    [ModuleInitializer]
+    public static void RunWhenSelfTesting()
+    {
+        if (Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--self-test", StringComparison.OrdinalIgnoreCase)))
+            Run();
+    }
+
     public static void Run()
     {
         var ping = BleUartCandidateProtocol.BuildPacket(0x09, []);
