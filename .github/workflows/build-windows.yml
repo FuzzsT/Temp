@@ -2,7 +2,7 @@ name: build-windows
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, fullbridge-0.3.0, fullbridge-0.3.2, fullbridge-0.3.3-auth-trace ]
+    branches: [ main, master, fullbridge-0.3.0, fullbridge-0.3.2, fullbridge-0.3.3-auth-trace, fullbridge-0.4.0-renderer-tap ]
 
 jobs:
   build-x64:
@@ -15,7 +15,7 @@ jobs:
       - name: Build FullBridge
         shell: powershell
         run: .\build.ps1 -Arch x64 -Publish
-      - name: Self-test Virtual LaserCube
+      - name: Self-test renderer tap and Virtual LaserCube
         shell: powershell
         run: .\bin\Cube7Bridge.exe --self-test
       - name: Verify required native + managed binaries
@@ -24,7 +24,7 @@ jobs:
       - name: Stage ready-to-run package
         shell: powershell
         run: |
-          $stage = '.\release\Cube7-LaserOS-FullBridge-0.3.3-win-x64'
+          $stage = '.\release\Cube7-LaserOS-FullBridge-0.4.0-RENDERER-TAP-win-x64'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item .\bin (Join-Path $stage 'bin') -Recurse -Force
           Copy-Item .\start-full.cmd,.\start-trace.cmd,.\start-ble.cmd,.\README.md,.\config.json,.\VERSION.json -Destination $stage -Force
@@ -32,16 +32,16 @@ jobs:
           Copy-Item .\protocols (Join-Path $stage 'protocols') -Recurse -Force
           Copy-Item .\scripts (Join-Path $stage 'scripts') -Recurse -Force
           Copy-Item .\verify-release.ps1 (Join-Path $stage 'verify-release.ps1') -Force
-          Compress-Archive -Path "$stage\*" -DestinationPath Cube7-LaserOS-FullBridge-0.3.3-win-x64.zip -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath Cube7-LaserOS-FullBridge-0.4.0-RENDERER-TAP-win-x64.zip -Force
       - name: Verify packaged ZIP contents
         shell: powershell
         run: |
           $tmp = Join-Path $env:RUNNER_TEMP 'fullbridge-verify'
           if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-          Expand-Archive .\Cube7-LaserOS-FullBridge-0.3.3-win-x64.zip -DestinationPath $tmp
+          Expand-Archive .\Cube7-LaserOS-FullBridge-0.4.0-RENDERER-TAP-win-x64.zip -DestinationPath $tmp
           .\verify-release.ps1 -BinDir (Join-Path $tmp 'bin')
       - uses: actions/upload-artifact@v4
         with:
-          name: Cube7-LaserOS-FullBridge-0.3.3-win-x64
-          path: Cube7-LaserOS-FullBridge-0.3.3-win-x64.zip
+          name: Cube7-LaserOS-FullBridge-0.4.0-RENDERER-TAP-win-x64
+          path: Cube7-LaserOS-FullBridge-0.4.0-RENDERER-TAP-win-x64.zip
           if-no-files-found: error
