@@ -19,7 +19,14 @@ enum class HookApi : uint8_t {
     Recv = 6,
     WSASendTo = 7,
     WSARecvFrom = 8,
-    RendererFrame = 20
+    RendererFrame = 20,
+    SetupDiGetClassDevs = 30,
+    HidGetAttributes = 31,
+    CreateFileW = 32,
+    WriteFile = 33,
+    ReadFile = 34,
+    DeviceIoControlTx = 35,
+    DeviceIoControlRx = 36
 };
 
 #pragma pack(push, 1)
