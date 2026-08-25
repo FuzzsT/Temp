@@ -12,6 +12,13 @@ public sealed record LoopbackRuntimePlan(
     {
         ArgumentNullException.ThrowIfNull(cfg);
         bool active = cfg.Enabled && cfg.NetworkServerEnabled;
+        if (active)
+        {
+            // Validate the complete loopback endpoint contract before Program is allowed
+            // to bind any server socket. This prevents a misconfigured 0.0.0.0/LAN
+            // listener from being opened even transiently.
+            _ = LoopbackInjectionProfile.From(cfg);
+        }
         return new LoopbackRuntimePlan(
             StartExternalServer: active,
             WriteInjectionProfile: active,
