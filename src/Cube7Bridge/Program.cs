@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.3.3";
+    private const string Version = "0.4.0";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -18,9 +18,10 @@ internal static class Program
         var cfg = BridgeConfig.Load(configPath);
 
         Console.WriteLine($"Cube7 LaserOS Full Bridge {Version}");
-        Console.WriteLine("Virtual LaserCube discovery enabled; physical-output=DISABLED.");
-        Console.WriteLine("Passive B0/B1 authentication trace enabled; no synthetic AUTH OK response is generated.");
-        Console.WriteLine("No BLE characteristic payload writes and no interlock/E-stop bypass.");
+        Console.WriteLine("Renderer-tap build: captures ldRendererOpenlase frames before hardware authentication.");
+        Console.WriteLine("Physical CUBE output is NOT enabled by this build; renderer bridge is DRY-RUN/CAPTURE ONLY.");
+        Console.WriteLine("Virtual LaserCube responder is optional and disabled by the 0.4 default config.");
+        Console.WriteLine("No interlock/E-stop bypass and no automatic optical output enable.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
         using var cts = new CancellationTokenSource();
@@ -41,7 +42,9 @@ internal static class Program
 
                 ConfigureVirtualMarker(markerPath, cfg.VirtualLaserCube.Enabled);
                 if (cfg.VirtualLaserCube.Enabled)
-                    Console.WriteLine("[virtual] injected responder armed for LaserCube UDP 45456/45457/45458");
+                    Console.WriteLine("[virtual] optional injected responder armed for LaserCube UDP 45456/45457/45458");
+                else
+                    Console.WriteLine("[renderer] virtual LaserCube disabled; tapping renderer independently of Projector Setup device state.");
 
                 if (cfg.VirtualLaserCube.Enabled && cfg.VirtualLaserCube.NetworkServerEnabled)
                 {
@@ -113,7 +116,7 @@ internal static class Program
 
             if (running is not null && cfg.EarlyHook.RestartRunningLaserOs && !string.IsNullOrWhiteSpace(launchPath))
             {
-                Console.WriteLine($"[early] LaserOS already running PID={running.Id}; restarting gracefully so discovery is hooked before startup.");
+                Console.WriteLine($"[early] LaserOS already running PID={running.Id}; restarting gracefully so renderer imports are hooked before startup.");
                 bool closed = GracefullyClose(running, cfg.EarlyHook.GracefulCloseTimeoutSeconds);
                 running.Dispose();
                 running = null;
@@ -130,7 +133,7 @@ internal static class Program
             }
             else if (running is null && !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath))
             {
-                Console.WriteLine($"[early] LaserOS is not running; launching with hook before startup: {launchPath}");
+                Console.WriteLine($"[early] LaserOS is not running; launching with renderer hook before startup: {launchPath}");
                 if (StartEarlyInjector(injector, dll, launchPath)) return;
                 Console.WriteLine("[early] early-launch failed; falling back to process watcher.");
             }
