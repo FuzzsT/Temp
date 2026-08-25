@@ -10,8 +10,17 @@ public sealed class BridgeConfig
     public bool TraceOnly { get; set; } = true;
     public bool AllowBleWrites { get; set; } = false;
     public string CaptureDirectory { get; set; } = "captures";
+    public EarlyHookConfig EarlyHook { get; set; } = new();
     public BleConfig Ble { get; set; } = new();
     public VirtualLaserCubeConfig VirtualLaserCube { get; set; } = new();
+
+    public sealed class EarlyHookConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public bool RestartRunningLaserOs { get; set; } = true;
+        public int GracefulCloseTimeoutSeconds { get; set; } = 10;
+        public string? LaserOsExePath { get; set; }
+    }
 
     public sealed class BleConfig
     {
