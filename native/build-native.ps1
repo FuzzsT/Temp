@@ -15,7 +15,12 @@ $dllOut = Join-Path $out 'LaserOSHook.dll'
 $exeOut = Join-Path $out 'Cube7Injector.exe'
 Remove-Item $dllOut,$exeOut -Force -ErrorAction SilentlyContinue
 
-$cmd = @"
+# Use a real temporary .cmd file. Passing a multiline command string through
+# cmd.exe /c caused only VsDevCmd.bat to run on the hosted runner, while the cl
+# lines were silently skipped.
+$tmpCmd = Join-Path $env:TEMP ("cube7-native-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
+@"
+@echo off
 call "$dev" -arch=$Arch -host_arch=x64
 if errorlevel 1 exit /b %errorlevel%
 cd /d "$root"
@@ -23,9 +28,16 @@ cl /nologo /std:c++17 /EHsc /O2 /LD /Fe:"$dllOut" LaserOSHook.cpp Ws2_32.lib
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /O2 /Fe:"$exeOut" Injector.cpp
 if errorlevel 1 exit /b %errorlevel%
-"@
-cmd.exe /d /s /c $cmd
-if ($LASTEXITCODE -ne 0) { throw "Native build failed: $LASTEXITCODE" }
+exit /b 0
+"@ | Set-Content -Path $tmpCmd -Encoding ASCII
+
+try {
+    & $env:ComSpec /d /c $tmpCmd
+    if ($LASTEXITCODE -ne 0) { throw "Native build failed: $LASTEXITCODE" }
+}
+finally {
+    Remove-Item $tmpCmd -Force -ErrorAction SilentlyContinue
+}
 
 $missing = @()
 if (!(Test-Path $dllOut -PathType Leaf)) { $missing += 'LaserOSHook.dll' }
