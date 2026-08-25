@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 
 namespace Cube7Bridge;
 
@@ -14,8 +16,9 @@ public static class SelfTest
             BluetoothAddressTests();
             RendererFrameTests();
             HandshakeTrackerTests();
+            HardenedDryRunTests();
             await UdpServerTestsAsync();
-            Console.WriteLine("SELFTEST PASS: renderer tap + 0x27 discovery + protocol + passive B0/B1 auth trace + UDP virtual device + BLE target parser; physical-output=DISABLED");
+            Console.WriteLine("SELFTEST PASS: hardened preflight + pipeline status + renderer stats + dry-run translator + support bundle + renderer tap + protocol; physical-output=DISABLED");
             return 0;
         }
         catch (Exception ex)
@@ -61,6 +64,15 @@ public static class SelfTest
         ulong parsed = BridgeConfig.ParseBluetoothAddress(expected);
         Require(parsed == 0xE466E5D26E38UL, "BLE exact MAC parse");
         Require(BridgeConfig.FormatBluetoothAddress(parsed) == expected, "BLE exact MAC round-trip");
+    }
+
+    private static RendererFrame BuildRendererFrame()
+    {
+        return new RendererFrame(30000, 3, 0x12345678UL,
+        [
+            new RendererPoint(-0.5f, 0.25f, 0x00FF0000, 1),
+            new RendererPoint(0.75f, -0.125f, 0x0000FF00, 2)
+        ]);
     }
 
     private static void RendererFrameTests()
@@ -111,6 +123,56 @@ public static class SelfTest
         Require(File.Exists(summary), "handshake summary file");
         Require(File.ReadLines(summary).Count() >= 9, "handshake summary rows");
         Directory.Delete(dir, true);
+    }
+
+    private static void HardenedDryRunTests()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Cube7Bridge-hardening-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string exe = Path.Combine(root, "LaserOS.exe");
+            File.WriteAllText(exe, "laser-os-preflight-test");
+            string expectedHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(exe))).ToLowerInvariant();
+            var preflight = LaserOsPreflight.Verify(exe, expectedHash);
+            Require(preflight.Exists && preflight.HashMatch && preflight.ActualSha256 == expectedHash, "LaserOS preflight exact SHA");
+            Require(!LaserOsPreflight.Verify(exe, new string('0', 64)).HashMatch, "LaserOS preflight mismatch detection");
+
+            var status = new PipelineStatus();
+            status.Set("LASEROS_HOOK", "OK", "connected");
+            status.Set("PHYSICAL_OUTPUT", "DISABLED", "dry-run invariant");
+            string statusText = status.RenderText();
+            Require(statusText.Contains("LASEROS_HOOK") && statusText.Contains("DISABLED"), "pipeline status render");
+
+            var frame = BuildRendererFrame();
+            var stats = new RendererFrameStatistics();
+            stats.Observe(frame);
+            stats.Observe(frame);
+            var snap = stats.Snapshot();
+            Require(snap.Frames == 2 && snap.Points == 4 && snap.LastRate == 30000 && snap.MaxPoints == 2, "renderer statistics");
+
+            var normalized = DryRunTranslator.Translate(frame);
+            Require(!normalized.PhysicalOutputEnabled && normalized.Points.Length == 2, "dry-run translator physical invariant");
+            Require(normalized.Points.All(p => p.X is >= 0 and <= 4095 && p.Y is >= 0 and <= 4095), "dry-run translator coordinate clamp");
+            Require(normalized.Points[0].R == 4095 && normalized.Points[0].G == 0 && normalized.Points[0].B == 0, "dry-run translator RGB mapping");
+
+            string capture = Path.Combine(root, "capture");
+            Directory.CreateDirectory(capture);
+            File.WriteAllText(Path.Combine(capture, "renderer-frames.ndjson"), "{}\n");
+            string cfg = Path.Combine(root, "config.json");
+            File.WriteAllText(cfg, "{\"allowBleWrites\":false}");
+            string bundle = SupportBundle.Create(capture, cfg, status, preflight, snap);
+            Require(File.Exists(bundle), "support bundle created");
+            using var zip = ZipFile.OpenRead(bundle);
+            Require(zip.Entries.Any(e => e.FullName == "support/status.json"), "support bundle status");
+            Require(zip.Entries.Any(e => e.FullName == "support/preflight.json"), "support bundle preflight");
+            Require(zip.Entries.Any(e => e.FullName == "config/config.json"), "support bundle config");
+            Require(zip.Entries.Any(e => e.FullName.EndsWith("renderer-frames.ndjson", StringComparison.OrdinalIgnoreCase)), "support bundle capture");
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
     }
 
     private static async Task UdpServerTestsAsync()
