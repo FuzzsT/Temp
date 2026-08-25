@@ -19,7 +19,8 @@ enum class HookApi : uint8_t {
     Recv = 6,
     WSASendTo = 7,
     WSARecvFrom = 8,
-    RendererFrame = 20
+    RendererFrame = 20,
+    RendererHealth = 21
 };
 
 #pragma pack(push, 1)
@@ -52,8 +53,26 @@ struct RendererPointWire {
     uint32_t color;
     int32_t param;
 };
+
+static constexpr uint32_t C7RH_MAGIC = 0x48524652; // bytes: 'RFRH'
+static constexpr uint16_t C7RH_VERSION = 1;
+enum RendererHookPatchFlags : uint16_t {
+    RendererCreateFramePatched = 1 << 0,
+    RendererVertexPatched = 1 << 1,
+    RendererVertex3Patched = 1 << 2
+};
+struct RendererHookHealthWire {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t patchFlags;
+    uint64_t createFrameCalls;
+    uint64_t vertexCalls;
+    uint64_t vertex3Calls;
+    uint64_t emittedFrames;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(HookRecordHeader) == 44, "HookRecordHeader size mismatch");
 static_assert(sizeof(RendererFrameWireHeader) == 24, "RendererFrameWireHeader size mismatch");
 static_assert(sizeof(RendererPointWire) == 16, "RendererPointWire size mismatch");
+static_assert(sizeof(RendererHookHealthWire) == 40, "RendererHookHealthWire size mismatch");
