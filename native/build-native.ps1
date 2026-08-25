@@ -14,7 +14,8 @@ if (!(Test-Path $dev)) { throw 'VsDevCmd.bat not found.' }
 $dllOut = Join-Path $out 'LaserOSHook.dll'
 $exeOut = Join-Path $out 'Cube7Injector.exe'
 $selfTestOut = Join-Path $env:TEMP ("Cube7NativeSelfTest-{0}.exe" -f [guid]::NewGuid().ToString('N'))
-Remove-Item $dllOut,$exeOut,$selfTestOut -Force -ErrorAction SilentlyContinue
+$probeOut = Join-Path $env:TEMP ("LaserOSEarlyHookProbe-{0}.exe" -f [guid]::NewGuid().ToString('N'))
+Remove-Item $dllOut,$exeOut,$selfTestOut,$probeOut -Force -ErrorAction SilentlyContinue
 
 $tmpCmd = Join-Path $env:TEMP ("cube7-native-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
 @"
@@ -30,6 +31,11 @@ cl /nologo /std:c++17 /EHsc /O2 /LD /Fe:"$dllOut" LaserOSHook.cpp Ws2_32.lib
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /O2 /Fe:"$exeOut" Injector.cpp
 if errorlevel 1 exit /b %errorlevel%
+cl /nologo /std:c++17 /EHsc /O2 /Fe:"$probeOut" LaserOSEarlyHookProbe.cpp Ws2_32.lib
+if errorlevel 1 exit /b %errorlevel%
+copy /y nul "$out\VirtualLaserCube.enabled" >nul
+"$exeOut" --launch "$probeOut" --dll "$dllOut" --once
+if errorlevel 1 exit /b %errorlevel%
 exit /b 0
 "@ | Set-Content -Path $tmpCmd -Encoding ASCII
 
@@ -38,7 +44,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Native build failed: $LASTEXITCODE" }
 }
 finally {
-    Remove-Item $tmpCmd,$selfTestOut -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmpCmd,$selfTestOut,$probeOut -Force -ErrorAction SilentlyContinue
 }
 
 $missing = @()
