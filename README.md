@@ -1,6 +1,49 @@
-# Cube7 LaserOS Full Bridge 0.3.2 — REAL 0x27 DISCOVERY
+# Cube7 LaserOS Full Bridge 0.3.3 — AUTH TRACE
 
 Windows x64 bridge do diagnostyki **LaserOS.exe** oraz **Laserworld CUBE 7**.
+
+## 0.3.3 — pasywna diagnostyka `0xB0/0xB1`
+
+0.3.2 naprawił rzeczywisty etap discovery `0x27 -> 27 00`. 0.3.3 dodaje automatyczny tracker całego handshake'u LaserOS:
+
+```text
+DISCOVERY_REQUEST
+DISCOVERY_ACCEPTED
+FULL_INFO_REQUEST
+FULL_INFO_ACCEPTED
+AUTH_REQUEST
+AUTH_REQUEST_ACK
+AUTH_RESPONSE_QUERY
+AUTH_RESPONSE_CAPTURED
+POST_AUTH_DEVICE_TRAFFIC
+```
+
+Każda zmiana etapu jest wypisywana jako `[stage] ...` oraz zapisywana w:
+
+```text
+captures/<timestamp>/handshake-summary.ndjson
+```
+
+Podsumowanie zawiera długość payloadu i SHA-256, dzięki czemu można porównywać kolejne challenge/response bez ręcznego przeglądania pełnego hexdumpu.
+
+FullBridge **nie generuje syntetycznego `AUTH OK`**. Tracker jest pasywny i służy do ustalenia, czy LaserOS zatrzymuje się na discovery, full-info, ACK `0xB0`, odczycie `0xB1`, czy dopiero na własnym callbacku weryfikującym odpowiedź.
+
+## Wynik analizy konkretnego LaserOS 0.18.1
+
+Przeanalizowany plik:
+
+```text
+LaserOS.exe
+SHA-256 21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c
+```
+
+Ten build importuje z `ldCore.dll` zarówno callback generatora żądania bezpieczeństwa, jak i callback weryfikujący odpowiedź — osobno dla Network i USB managera. Oba transporty dostają te same funkcje LaserOS.
+
+Szczegółowy zapis analizy znajduje się w:
+
+```text
+docs/LaserOS-0.18.1-auth-flow.md
+```
 
 ## 0.3.2 — rzeczywisty root cause `NO LASER`
 
@@ -16,12 +59,12 @@ Rzeczywista sekwencja LaserOS jest następująca:
 
 0.3.1 emulował `0x77`, ale nie `0x27`, więc LaserOS nigdy nie tworzył urządzenia i pola Projector Setup pozostawały `?`.
 
-0.3.2 dodaje `0x27 -> 27 00` zarówno do implementacji .NET, jak i natywnego respondera w `LaserOSHook.dll`, oraz poprawia routing portów:
+Routing:
 
 ```text
 0x27 -> UDP 45456
-0x77/0x78/0x80/0x8A -> UDP 45457
-0xA9 -> UDP 45458
+0x77/0x78/0x80/0x82/0x8A/0x8D/0xA0/0xB0/0xB1 -> UDP 45457
+0xA9/0x9A -> UDP 45458
 ```
 
 ## EarlyHook dla instalacji użytkownika
@@ -34,7 +77,7 @@ C:\Program Files\LaserOS\LaserOS.exe
 
 `start-full.cmd` uruchamia early-hook:
 
-1. jeżeli LaserOS działa, odczytuje/wykorzystuje ścieżkę EXE i wysyła normalne żądanie zamknięcia;
+1. jeżeli LaserOS działa, używa ścieżki EXE i wysyła normalne żądanie zamknięcia;
 2. uruchamia LaserOS jako `CREATE_SUSPENDED`;
 3. wstrzykuje `LaserOSHook.dll`;
 4. czeka na pierwszy przebieg patchowania IAT;
@@ -42,28 +85,29 @@ C:\Program Files\LaserOS\LaserOS.exe
 
 Nie jest wykonywany force-kill.
 
-## Oczekiwany log 0.3.2
-
-Najważniejsze linie po uruchomieniu `start-full.cmd`:
+## Oczekiwany log 0.3.3
 
 ```text
-Cube7 LaserOS Full Bridge 0.3.2
+Cube7 LaserOS Full Bridge 0.3.3
 [early] ...
 [inject] PID=... OK
-[early] resumed PID=... after hook injection
 [hook] connected
-[TX] ...:45456 1B GET_ALIVE
-[RX] ... 2B GET_ALIVE RESPONSE
-[TX] ...:45457 1B GET_FULL_INFO
+[stage] DISCOVERY_REQUEST ...
+[stage] DISCOVERY_ACCEPTED ...
+[stage] FULL_INFO_REQUEST ...
+[stage] FULL_INFO_ACCEPTED ...
 ```
 
-Jeżeli po `GET_FULL_INFO` pojawi się:
+Jeżeli LaserOS przejdzie dalej:
 
 ```text
-SECURITY_REQUEST
+[stage] AUTH_REQUEST ...
+[stage] AUTH_REQUEST_ACK ...
+[stage] AUTH_RESPONSE_QUERY ...
+[stage] AUTH_RESPONSE_CAPTURED ...
 ```
 
-czyli opcode `0xB0`, discovery jest już naprawione, a następnym etapem do analizy jest autoryzacja LaserCube (`0xB0/0xB1`). 0.3.2 **nie fałszuje jeszcze odpowiedzi bezpieczeństwa** — loguje te opcode'y, aby można było odtworzyć prawidłową sekwencję na podstawie realnego ruchu.
+Jeżeli pojawi się `AUTH_RESPONSE_CAPTURED`, ale nie `POST_AUTH_DEVICE_TRAFFIC`, najbardziej prawdopodobnym blokiem jest callback weryfikujący odpowiedź w samym LaserOS.
 
 ## Wykryty Laserworld CUBE 7
 
@@ -75,14 +119,15 @@ FFE1:        Read / WriteWithoutResponse / Write / Notify
 FFE2:        WriteWithoutResponse / Write
 ```
 
-BLE pozostaje w 0.3.2 w trybie READ/NOTIFY. Brak vendor payload writes.
+BLE pozostaje w 0.3.3 w trybie READ/NOTIFY. Brak vendor payload writes.
 
 ## Safety scope
 
 - fizyczne wyjście lasera pozostaje wyłączone w warstwie Virtual LaserCube;
 - `SET_OUTPUT 0x80` zmienia tylko stan wirtualny;
 - brak BLE characteristic payload writes;
-- brak bypassu interlock/E-stop.
+- brak bypassu interlock/E-stop;
+- brak syntetycznego pozytywnego wyniku autoryzacji.
 
 ## Uruchomienie
 
@@ -99,13 +144,13 @@ bin\Cube7Bridge.exe --self-test
 Oczekiwany wynik:
 
 ```text
-SELFTEST PASS: 0x27 discovery + protocol + UDP virtual device + BLE target parser; physical-output=DISABLED
+SELFTEST PASS: 0x27 discovery + protocol + passive B0/B1 auth trace + UDP virtual device + BLE target parser; physical-output=DISABLED
 ```
 
 ## Runtime
 
 ```text
-Cube7-LaserOS-FullBridge-0.3.2-win-x64/
+Cube7-LaserOS-FullBridge-0.3.3-win-x64/
 ├── start-full.cmd
 ├── start-trace.cmd
 ├── start-ble.cmd
