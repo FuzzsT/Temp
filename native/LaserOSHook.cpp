@@ -8,6 +8,7 @@
 #include <string>
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <unordered_map>
 #include "HookCommon.h"
 #include "VirtualLaserCubeNative.h"
@@ -26,6 +27,11 @@ using bind_t = int (WSAAPI*)(SOCKET, const sockaddr*, int);
 using socket_t = SOCKET (WSAAPI*)(int, int, int);
 using closesocket_t = int (WSAAPI*)(SOCKET);
 
+// MSVC x64 member-function ABI: RCX=this, then normal x64 argument registers.
+using renderer_create_frame_t = void(__fastcall*)(void*, int, bool, bool);
+using renderer_vertex_t = void(__fastcall*)(void*, float, float, uint32_t, int);
+using renderer_vertex3_t = void(__fastcall*)(void*, float, float, float, uint32_t, int);
+
 static sendto_t Real_sendto = nullptr;
 static recvfrom_t Real_recvfrom = nullptr;
 static WSASend_t Real_WSASend = nullptr;
@@ -37,16 +43,30 @@ static recv_t Real_recv = nullptr;
 static bind_t Real_bind = nullptr;
 static socket_t Real_socket = nullptr;
 static closesocket_t Real_closesocket = nullptr;
+static renderer_create_frame_t Real_RendererCreateNewFrame = nullptr;
+static renderer_vertex_t Real_RendererVertex = nullptr;
+static renderer_vertex3_t Real_RendererVertex3 = nullptr;
 
 static HMODULE gModule = nullptr;
 static HANDLE gPipe = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION gLock;
 static CRITICAL_SECTION gVirtualLock;
+static CRITICAL_SECTION gRendererLock;
 static bool gLockReady = false;
 static bool gVirtualLockReady = false;
+static bool gRendererLockReady = false;
 static bool gVirtualEnabled = false;
 static thread_local bool gInHook = false;
 static std::unordered_map<SOCKET, VirtualLaserCubeNative> gVirtualState;
+
+struct RendererState {
+    int32_t rate = 0;
+    uint16_t flags = 0;
+    bool started = false;
+    std::vector<RendererPointWire> points;
+};
+static std::unordered_map<void*, RendererState> gRendererState;
+static constexpr size_t MAX_RENDER_POINTS = 65500;
 
 static uint64_t Now100ns() {
     FILETIME ft{};
@@ -87,7 +107,7 @@ static void Trace(HookDirection dir, HookApi api, SOCKET s, const sockaddr* remo
 
     sockaddr_storage ss{};
     int ssLen = sizeof(ss);
-    if (!remote && getpeername(s, reinterpret_cast<sockaddr*>(&ss), &ssLen) == 0)
+    if (!remote && s != INVALID_SOCKET && getpeername(s, reinterpret_cast<sockaddr*>(&ss), &ssLen) == 0)
         remote = reinterpret_cast<const sockaddr*>(&ss);
 
     HookRecordHeader h{};
@@ -113,6 +133,78 @@ static void Trace(HookDirection dir, HookApi api, SOCKET s, const sockaddr* remo
 
     LeaveCriticalSection(&gLock);
     gInHook = false;
+}
+
+static void EmitRendererFrame(void* renderer) {
+    if (!renderer || !gRendererLockReady) return;
+
+    RendererState snapshot;
+    bool have = false;
+    EnterCriticalSection(&gRendererLock);
+    auto it = gRendererState.find(renderer);
+    if (it != gRendererState.end() && it->second.started && !it->second.points.empty()) {
+        snapshot.rate = it->second.rate;
+        snapshot.flags = it->second.flags;
+        snapshot.started = true;
+        snapshot.points.swap(it->second.points);
+        have = true;
+    }
+    LeaveCriticalSection(&gRendererLock);
+    if (!have) return;
+
+    const size_t count = std::min(snapshot.points.size(), MAX_RENDER_POINTS);
+    const size_t bytes = sizeof(RendererFrameWireHeader) + count * sizeof(RendererPointWire);
+    std::vector<uint8_t> payload(bytes);
+    RendererFrameWireHeader header{};
+    header.magic = C7RF_MAGIC;
+    header.version = C7RF_VERSION;
+    header.flags = snapshot.flags;
+    header.rate = snapshot.rate;
+    header.pointCount = static_cast<uint32_t>(count);
+    header.rendererId = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(renderer));
+    memcpy(payload.data(), &header, sizeof(header));
+    if (count)
+        memcpy(payload.data() + sizeof(header), snapshot.points.data(), count * sizeof(RendererPointWire));
+
+    Trace(HookDirection::Tx, HookApi::RendererFrame, INVALID_SOCKET, nullptr, payload.data(), static_cast<uint32_t>(payload.size()));
+}
+
+static void __fastcall Hook_RendererCreateNewFrame(void* self, int rate, bool flag1, bool flag2) {
+    // createNewFrame is the renderer frame boundary. Flush the previous frame
+    // before letting ldCore start its next cached frame.
+    EmitRendererFrame(self);
+    if (gRendererLockReady && self) {
+        EnterCriticalSection(&gRendererLock);
+        auto& state = gRendererState[self];
+        state.rate = rate;
+        state.flags = static_cast<uint16_t>((flag1 ? 1 : 0) | (flag2 ? 2 : 0));
+        state.started = true;
+        state.points.clear();
+        state.points.reserve(4096);
+        LeaveCriticalSection(&gRendererLock);
+    }
+    if (Real_RendererCreateNewFrame) Real_RendererCreateNewFrame(self, rate, flag1, flag2);
+}
+
+static void AppendRendererPoint(void* self, float x, float y, uint32_t color, int param) {
+    if (!self || !gRendererLockReady) return;
+    EnterCriticalSection(&gRendererLock);
+    auto& state = gRendererState[self];
+    if (!state.started) state.started = true;
+    if (state.points.size() < MAX_RENDER_POINTS)
+        state.points.push_back(RendererPointWire{x, y, color, static_cast<int32_t>(param)});
+    LeaveCriticalSection(&gRendererLock);
+}
+
+static void __fastcall Hook_RendererVertex(void* self, float x, float y, uint32_t color, int param) {
+    AppendRendererPoint(self, x, y, color, param);
+    if (Real_RendererVertex) Real_RendererVertex(self, x, y, color, param);
+}
+
+static void __fastcall Hook_RendererVertex3(void* self, float x, float y, float z, uint32_t color, int param) {
+    (void)z; // CUBE 7 transport is 2D; preserve XY and packed renderer color.
+    AppendRendererPoint(self, x, y, color, param);
+    if (Real_RendererVertex3) Real_RendererVertex3(self, x, y, z, color, param);
 }
 
 static bool MarkerEnabled() {
@@ -148,26 +240,21 @@ static bool EnsureSocketBound(SOCKET s, sockaddr_in& local) {
     ZeroMemory(&local, sizeof(local));
     if (getsockname(s, reinterpret_cast<sockaddr*>(&local), &len) == 0 && local.sin_family == AF_INET && local.sin_port != 0)
         return true;
-
     if (!Real_bind) return false;
     sockaddr_in any{};
     any.sin_family = AF_INET;
     any.sin_addr.s_addr = htonl(INADDR_ANY);
     any.sin_port = 0;
     if (Real_bind(s, reinterpret_cast<const sockaddr*>(&any), sizeof(any)) != 0) return false;
-
     len = sizeof(local);
     return getsockname(s, reinterpret_cast<sockaddr*>(&local), &len) == 0 && local.sin_family == AF_INET && local.sin_port != 0;
 }
 
 static bool InjectResponseToSocket(SOCKET target, const std::vector<uint8_t>& response) {
     if (response.empty() || !Real_socket || !Real_sendto || !Real_closesocket) return response.empty();
-
     sockaddr_in local{};
     if (!EnsureSocketBound(target, local)) return false;
-    if (local.sin_addr.s_addr == htonl(INADDR_ANY))
-        local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
+    if (local.sin_addr.s_addr == htonl(INADDR_ANY)) local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     SOCKET helper = Real_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (helper == INVALID_SOCKET) return false;
     int sent = Real_sendto(helper, reinterpret_cast<const char*>(response.data()), static_cast<int>(response.size()), 0,
@@ -177,7 +264,6 @@ static bool InjectResponseToSocket(SOCKET target, const std::vector<uint8_t>& re
 }
 
 static bool IsVirtualOpcodePort(uint8_t opcode, uint16_t port) {
-    // Real libLaserdockCore discovery is 0x27 on the dedicated alive port.
     if (opcode == 0x27) return port == 45456;
     if (opcode == 0x77) return port == 45457;
     if (opcode == 0xA9) return port == 45458;
@@ -188,16 +274,12 @@ static bool HandleVirtualTx(SOCKET s, const sockaddr* remote, const uint8_t* dat
     if (!gVirtualEnabled || !data || len == 0 || !gVirtualLockReady) return false;
     const uint16_t port = RemotePort(s, remote);
     if (!IsVirtualOpcodePort(data[0], port)) return false;
-
     std::vector<uint8_t> payload(data, data + len);
     std::vector<uint8_t> response;
     EnterCriticalSection(&gVirtualLock);
     response = gVirtualState[s].Handle(payload);
     LeaveCriticalSection(&gVirtualLock);
-
-    // SAMPLE_DATA may intentionally have no reply when buffer responses are disabled.
-    if (!response.empty() && !InjectResponseToSocket(s, response))
-        return false;
+    if (!response.empty() && !InjectResponseToSocket(s, response)) return false;
     return true;
 }
 
@@ -223,57 +305,43 @@ static int WSAAPI Hook_sendto(SOCKET s, const char* buf, int len, int flags, con
     }
     return Real_sendto(s, buf, len, flags, to, tolen);
 }
-
 static int WSAAPI Hook_recvfrom(SOCKET s, char* buf, int len, int flags, sockaddr* from, int* fromlen) {
     int r = Real_recvfrom(s, buf, len, flags, from, fromlen);
     if (r > 0 && buf) Trace(HookDirection::Rx, HookApi::RecvFrom, s, from, reinterpret_cast<const uint8_t*>(buf), static_cast<uint32_t>(r));
     return r;
 }
-
 static int WSAAPI Hook_WSASend(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD sent, DWORD flags, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     auto copy = FlattenBuffers(bufs, count);
     if (!copy.empty()) {
         Trace(HookDirection::Tx, HookApi::WSASend, s, nullptr, copy.data(), static_cast<uint32_t>(copy.size()));
-        if (HandleVirtualTx(s, nullptr, copy.data(), copy.size()) && !ov) {
-            if (sent) *sent = static_cast<DWORD>(copy.size());
-            return 0;
-        }
+        if (HandleVirtualTx(s, nullptr, copy.data(), copy.size()) && !ov) { if (sent) *sent = static_cast<DWORD>(copy.size()); return 0; }
     }
     return Real_WSASend(s, bufs, count, sent, flags, ov, cb);
 }
-
 static int WSAAPI Hook_WSARecv(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD received, LPDWORD flags, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     int r = Real_WSARecv(s, bufs, count, received, flags, ov, cb);
     if (r == 0 && received && *received > 0 && bufs && count && !ov) {
-        auto copy = FlattenBuffers(bufs, count);
-        if (copy.size() > *received) copy.resize(*received);
+        auto copy = FlattenBuffers(bufs, count); if (copy.size() > *received) copy.resize(*received);
         if (!copy.empty()) Trace(HookDirection::Rx, HookApi::WSARecv, s, nullptr, copy.data(), static_cast<uint32_t>(copy.size()));
     }
     return r;
 }
-
 static int WSAAPI Hook_WSASendTo(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD sent, DWORD flags, const sockaddr* to, int tolen, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     auto copy = FlattenBuffers(bufs, count);
     if (!copy.empty()) {
         Trace(HookDirection::Tx, HookApi::WSASendTo, s, to, copy.data(), static_cast<uint32_t>(copy.size()));
-        if (HandleVirtualTx(s, to, copy.data(), copy.size()) && !ov) {
-            if (sent) *sent = static_cast<DWORD>(copy.size());
-            return 0;
-        }
+        if (HandleVirtualTx(s, to, copy.data(), copy.size()) && !ov) { if (sent) *sent = static_cast<DWORD>(copy.size()); return 0; }
     }
     return Real_WSASendTo(s, bufs, count, sent, flags, to, tolen, ov, cb);
 }
-
 static int WSAAPI Hook_WSARecvFrom(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD received, LPDWORD flags, sockaddr* from, LPINT fromlen, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     int r = Real_WSARecvFrom(s, bufs, count, received, flags, from, fromlen, ov, cb);
     if (r == 0 && received && *received > 0 && bufs && count && !ov) {
-        auto copy = FlattenBuffers(bufs, count);
-        if (copy.size() > *received) copy.resize(*received);
+        auto copy = FlattenBuffers(bufs, count); if (copy.size() > *received) copy.resize(*received);
         if (!copy.empty()) Trace(HookDirection::Rx, HookApi::WSARecvFrom, s, from, copy.data(), static_cast<uint32_t>(copy.size()));
     }
     return r;
 }
-
 static int WSAAPI Hook_send(SOCKET s, const char* buf, int len, int flags) {
     if (buf && len > 0) {
         Trace(HookDirection::Tx, HookApi::Send, s, nullptr, reinterpret_cast<const uint8_t*>(buf), static_cast<uint32_t>(len));
@@ -281,7 +349,6 @@ static int WSAAPI Hook_send(SOCKET s, const char* buf, int len, int flags) {
     }
     return Real_send(s, buf, len, flags);
 }
-
 static int WSAAPI Hook_recv(SOCKET s, char* buf, int len, int flags) {
     int r = Real_recv(s, buf, len, flags);
     if (r > 0 && buf) Trace(HookDirection::Rx, HookApi::Recv, s, nullptr, reinterpret_cast<const uint8_t*>(buf), static_cast<uint32_t>(r));
@@ -289,9 +356,6 @@ static int WSAAPI Hook_recv(SOCKET s, char* buf, int len, int flags) {
 }
 
 static WORD WinsockOrdinalForName(const char* procName) {
-    // Classic Winsock 2 exports are commonly imported by ordinal by MSVC.
-    // These values are stable WS2_32 ordinals: recv=16, recvfrom=17,
-    // send=19, sendto=20. Newer WSA* routines are normally imported by name.
     if (strcmp(procName, "recv") == 0) return 16;
     if (strcmp(procName, "recvfrom") == 0) return 17;
     if (strcmp(procName, "send") == 0) return 19;
@@ -308,12 +372,10 @@ static bool PatchIAT(HMODULE module, const char* importedDll, const char* procNa
     if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
     auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (!dir.VirtualAddress) return false;
-
     auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress);
     for (; desc->Name; ++desc) {
         const char* dll = reinterpret_cast<const char*>(base + desc->Name);
         if (_stricmp(dll, importedDll) != 0) continue;
-
         auto* firstThunk = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->FirstThunk);
         auto* origThunk = desc->OriginalFirstThunk ? reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk) : firstThunk;
         for (; origThunk->u1.AddressOfData; ++origThunk, ++firstThunk) {
@@ -327,14 +389,11 @@ static bool PatchIAT(HMODULE module, const char* importedDll, const char* procNa
                 matches = strcmp(reinterpret_cast<const char*>(byName->Name), procName) == 0;
             }
             if (!matches) continue;
-
             DWORD oldProtect = 0;
             if (!VirtualProtect(&firstThunk->u1.Function, sizeof(uintptr_t), PAGE_READWRITE, &oldProtect)) return false;
             auto current = reinterpret_cast<void*>(static_cast<uintptr_t>(firstThunk->u1.Function));
             if (current == hook) {
-                DWORD ignored = 0;
-                VirtualProtect(&firstThunk->u1.Function, sizeof(uintptr_t), oldProtect, &ignored);
-                return true;
+                DWORD ignored = 0; VirtualProtect(&firstThunk->u1.Function, sizeof(uintptr_t), oldProtect, &ignored); return true;
             }
             if (original && !*original) *original = current;
 #ifdef _WIN64
@@ -361,27 +420,33 @@ static void PatchModule(HMODULE module) {
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "WSARecvFrom", reinterpret_cast<void*>(&Hook_WSARecvFrom), &dummy);
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "send", reinterpret_cast<void*>(&Hook_send), &dummy);
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "recv", reinterpret_cast<void*>(&Hook_recv), &dummy);
+
+    // Renderer tap: capture the simulator/render geometry before ldCore's hardware
+    // authentication path. These decorated names are verified against LaserOS x64
+    // v0.18.1 (SHA-256 21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c).
+    PatchIAT(module, "ldCore.dll", "?createNewFrame@ldRendererOpenlase@@QEAAXH_N0@Z",
+        reinterpret_cast<void*>(&Hook_RendererCreateNewFrame), reinterpret_cast<void**>(&Real_RendererCreateNewFrame));
+    PatchIAT(module, "ldCore.dll", "?vertex@ldRendererOpenlase@@QEAAXMMIH@Z",
+        reinterpret_cast<void*>(&Hook_RendererVertex), reinterpret_cast<void**>(&Real_RendererVertex));
+    PatchIAT(module, "ldCore.dll", "?vertex3@ldRendererOpenlase@@QEAAXMMMIH@Z",
+        reinterpret_cast<void*>(&Hook_RendererVertex3), reinterpret_cast<void**>(&Real_RendererVertex3));
 }
 
 static void PatchAllModules() {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
-    if (snap == INVALID_HANDLE_VALUE) {
-        PatchModule(GetModuleHandleW(nullptr));
-        return;
-    }
-    MODULEENTRY32W me{};
-    me.dwSize = sizeof(me);
-    if (Module32FirstW(snap, &me)) {
-        do { PatchModule(me.hModule); } while (Module32NextW(snap, &me));
-    }
+    if (snap == INVALID_HANDLE_VALUE) { PatchModule(GetModuleHandleW(nullptr)); return; }
+    MODULEENTRY32W me{}; me.dwSize = sizeof(me);
+    if (Module32FirstW(snap, &me)) do { PatchModule(me.hModule); } while (Module32NextW(snap, &me));
     CloseHandle(snap);
 }
 
 static DWORD WINAPI InstallThread(LPVOID) {
     InitializeCriticalSection(&gLock);
     InitializeCriticalSection(&gVirtualLock);
+    InitializeCriticalSection(&gRendererLock);
     gLockReady = true;
     gVirtualLockReady = true;
+    gRendererLockReady = true;
 
     HMODULE ws2 = GetModuleHandleW(L"Ws2_32.dll");
     if (!ws2) ws2 = LoadLibraryW(L"Ws2_32.dll");
@@ -398,12 +463,7 @@ static DWORD WINAPI InstallThread(LPVOID) {
     Real_closesocket = reinterpret_cast<closesocket_t>(GetProcAddress(ws2, "closesocket"));
 
     gVirtualEnabled = MarkerEnabled();
-
-    // Re-patch periodically so networking DLLs loaded after injection are also covered.
-    for (;;) {
-        PatchAllModules();
-        Sleep(750);
-    }
+    for (;;) { PatchAllModules(); Sleep(750); }
 }
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
@@ -416,6 +476,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         if (gPipe != INVALID_HANDLE_VALUE) CloseHandle(gPipe);
         if (gLockReady) DeleteCriticalSection(&gLock);
         if (gVirtualLockReady) DeleteCriticalSection(&gVirtualLock);
+        if (gRendererLockReady) DeleteCriticalSection(&gRendererLock);
     }
     return TRUE;
 }
