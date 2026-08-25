@@ -1,23 +1,25 @@
-# Cube7 LaserOS Full Bridge 0.4.1 — HARDENED-DRYRUN
+# Cube7 LaserOS Full Bridge 0.4.2 — BLE-UART-PROTOCOL-TRACE
 
 Windows x64 bridge do diagnostyki **LaserOS.exe** oraz **Laserworld CUBE 7**.
 
-## Status 0.4.1
+## Status 0.4.2
 
-0.4.1 porządkuje gałąź 0.4.x i dodaje warstwę hardeningu wokół istniejącego renderer tap. Fizyczne wyjście lasera pozostaje domyślnie i technicznie wyłączone w tym wydaniu.
+0.4.2 rozszerza 0.4.1 HARDENED-DRYRUN o pasywną warstwę analizy vendor BLE UART. Fizyczne wyjście lasera pozostaje wyłączone, `allowBleWrites=false`, a profil protokołu nie ma ścieżki transmisji do FFE2.
 
 Najważniejsze elementy:
 
-- preflight konkretnego `LaserOS.exe` z SHA-256;
-- fail-closed dla niezweryfikowanego builda LaserOS, gdy `requireVerifiedSha256=true`;
-- czytelny status całego pipeline'u;
-- statystyki renderer frames;
-- translator `RendererFrame -> Cube7NormalizedFrame` działający wyłącznie w trybie dry-run;
-- automatyczny `support-bundle.zip` po zakończeniu sesji;
-- support bundle zawiera tylko bezpieczne logi/summaries/config — nie dodaje domyślnie `.rawbin` ani `.bin` z surowymi payloadami auth;
-- brak BLE payload writes;
-- brak bypassu interlock/E-stop;
-- `PHYSICAL_OUTPUT=DISABLED` jest niezmiennikiem 0.4.1.
+- wszystko z 0.4.1: SHA-256 preflight, renderer tap, pipeline status, dry-run translator i support bundle;
+- potwierdzony target BLE `E4:66:E5:D2:6E:38` / `BLEAPP_C77D_V217`;
+- mapowanie GATT FFE0/FFE1/FFE2;
+- automatyczne połączenie i subskrypcja FFE1 notifications;
+- klasyfikacja 244-bajtowego bufora zer jako `idle-zero-buffer`;
+- parser kandydackiego formatu `[AA][CMD][LEN][PAYLOAD][SUM8]`;
+- walidacja sumy modulo 256 dla przechwyconych pakietów pasujących do tego formatu;
+- generator kandydackich pakietów wyłącznie do logu (`direction=dry-run-candidate`, `transmit=false`);
+- `ble-protocol-trace.ndjson` do dalszego porównania z ruchem oficjalnej aplikacji;
+- profil protokołu jest jawnie oznaczony `UNVERIFIED`.
+
+Materiał źródłowy dla warstwy BLE zawiera sprzeczne mapy command ID oraz różne hipotezy checksum (SUM/XOR/CRC). Z tego powodu 0.4.2 **nie traktuje command IDs jako zweryfikowanych i nie wysyła vendor payloads do FFE2**.
 
 ## Zweryfikowany LaserOS
 
@@ -41,7 +43,8 @@ DISCOVERY_0x27       OK         27 00 accepted
 FULL_INFO_0x77       OK         64-byte response accepted
 AUTH_B0_B1           WAITING    no auth traffic observed
 RENDERER_TAP         OK         frames=120 rate=30000pps points=842 max=900
-CUBE7_BLE            OK         E4:66:E5:D2:6E:38 ...
+CUBE7_BLE            OK         E4:66:E5:D2:6E:38 BLEAPP_C77D_V217
+BLE_PROTOCOL         TRACE      community-aa-sum-v1-candidate confidence=UNVERIFIED transmit=DISABLED
 TRANSLATOR           DRY-RUN    normalized=842 physical-output=OFF
 PHYSICAL_OUTPUT      DISABLED   hard safety invariant
 ```
@@ -60,6 +63,7 @@ captures/<timestamp>/
   renderer-frames.bin
   translator-dryrun.ndjson
   ble-*.ndjson
+  ble-protocol-trace.ndjson
 ```
 
 `translator-dryrun.ndjson` zawiera znormalizowane punkty 12-bit:
@@ -71,27 +75,6 @@ R,G,B = 0..4095
 
 Translator nie wysyła tych punktów do CUBE 7.
 
-## Support bundle
-
-Po `Ctrl+C` FullBridge automatycznie tworzy:
-
-```text
-captures/<timestamp>/support-bundle.zip
-```
-
-W środku znajdują się:
-
-```text
-support/status.json
-support/preflight.json
-support/renderer-stats.json
-support/safety.json
-config/config.json
-captures/*.ndjson
-```
-
-Surowe pliki binarne są celowo wykluczone z automatycznego support bundle, ponieważ mogą zawierać materiał związany z handshake/auth.
-
 ## BLE target CUBE 7
 
 ```text
@@ -100,17 +83,57 @@ Name:    BLEAPP_C77D_V217
 Service: 0000ffe0-0000-1000-8000-00805f9b34fb
 FFE1:    Read / WriteWithoutResponse / Write / Notify
 FFE2:    WriteWithoutResponse / Write
+Observed idle FFE1 read: 244 x 00
+Negotiated MTU observed by probe: 247
 ```
 
-Domyślne 0.4.1:
+Domyślne 0.4.2:
 
 ```text
-autoConnect=false
-subscribeNotifications=false
+autoConnect=true
+subscribeNotifications=true
 allowBleWrites=false
+BLE protocol profile=community-aa-sum-v1-candidate
+confidence=UNVERIFIED
+transmit=false
 ```
 
-Skan BLE służy do identyfikacji urządzenia i statusu. Nie są wysyłane vendor payload writes.
+CCCD notification subscription jest używana wyłącznie do odbioru FFE1. FullBridge nie wykonuje vendor payload writes do FFE1/FFE2.
+
+### Candidate protocol trace
+
+0.4.2 sprawdza, czy odebrane bytes pasują do kandydackiego formatu:
+
+```text
+AA CMD LEN PAYLOAD... CHECKSUM
+CHECKSUM candidate = sum(previous bytes) mod 256
+```
+
+Wyniki trafiają do:
+
+```text
+ble-protocol-trace.ndjson
+```
+
+Klasyfikacje:
+
+```text
+idle-zero-buffer
+AA-candidate-packet
+unknown
+```
+
+Plik zawiera także dwa **dry-run candidates** służące jako referencja do porównania z przyszłym capture oficjalnej aplikacji. Nie są one transmitowane.
+
+## Support bundle
+
+Po `Ctrl+C` FullBridge automatycznie tworzy:
+
+```text
+captures/<timestamp>/support-bundle.zip
+```
+
+W środku znajdują się m.in. status, preflight, renderer stats, config i bezpieczne `*.ndjson`, w tym `ble-protocol-trace.ndjson`. Surowe pliki binarne są celowo wykluczone z automatycznego bundle.
 
 ## Uruchomienie
 
@@ -120,8 +143,6 @@ Rozpakuj release do pustego katalogu i uruchom:
 start-full.cmd
 ```
 
-FullBridge przeprowadzi preflight, uruchomi/zhookuje LaserOS i rozpocznie renderer/BLE diagnostics.
-
 Tryby:
 
 ```bat
@@ -130,22 +151,20 @@ start-trace.cmd
 start-ble.cmd
 ```
 
+`start-ble.cmd` jest najszybszą opcją do zebrania nowego FFE1 trace bez uruchamiania LaserOS.
+
 ## Self-test
 
 ```bat
 bin\Cube7Bridge.exe --self-test
 ```
 
-Oczekiwany wynik:
-
-```text
-SELFTEST PASS: hardened preflight + pipeline status + renderer stats + dry-run translator + support bundle + renderer tap + protocol; physical-output=DISABLED
-```
+Self-test obejmuje również kandydacki packet builder/parser, checksum mismatch detection, profil `UNVERIFIED`, brak transmisji i klasyfikację idle 244-byte FFE1 buffer.
 
 ## Runtime
 
 ```text
-Cube7-LaserOS-FullBridge-0.4.1-HARDENED-DRYRUN-win-x64/
+Cube7-LaserOS-FullBridge-0.4.2-BLE-UART-PROTOCOL-TRACE-win-x64/
 ├── start-full.cmd
 ├── start-trace.cmd
 ├── start-ble.cmd
