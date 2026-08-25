@@ -15,9 +15,10 @@ $dllOut = Join-Path $out 'LaserOSHook.dll'
 $exeOut = Join-Path $out 'Cube7Injector.exe'
 $virtualMarker = Join-Path $out 'VirtualLaserCube.enabled'
 $selfTestOut = Join-Path $env:TEMP ("Cube7NativeSelfTest-{0}.exe" -f [guid]::NewGuid().ToString('N'))
+$loopbackSelfTestOut = Join-Path $env:TEMP ("Cube7LoopbackSelfTest-{0}.exe" -f [guid]::NewGuid().ToString('N'))
 $probeOut = Join-Path $env:TEMP ("LaserOSEarlyHookProbe-{0}.exe" -f [guid]::NewGuid().ToString('N'))
 $probePass = Join-Path $env:TEMP ("LaserOSEarlyHookProbe-{0}.pass" -f [guid]::NewGuid().ToString('N'))
-Remove-Item $dllOut,$exeOut,$virtualMarker,$selfTestOut,$probeOut,$probePass -Force -ErrorAction SilentlyContinue
+Remove-Item $dllOut,$exeOut,$virtualMarker,$selfTestOut,$loopbackSelfTestOut,$probeOut,$probePass -Force -ErrorAction SilentlyContinue
 $env:CUBE7_EARLYHOOK_PASSFILE = $probePass
 
 $tmpCmd = Join-Path $env:TEMP ("cube7-native-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
@@ -29,6 +30,10 @@ cd /d "$root"
 cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$selfTestOut" VirtualLaserCubeSelfTest.cpp
 if errorlevel 1 exit /b %errorlevel%
 "$selfTestOut"
+if errorlevel 1 exit /b %errorlevel%
+cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$loopbackSelfTestOut" LoopbackAutoconfigSelfTest.cpp Ws2_32.lib
+if errorlevel 1 exit /b %errorlevel%
+"$loopbackSelfTestOut"
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /LD /Fe:"$dllOut" LaserOSHook.cpp Ws2_32.lib
 if errorlevel 1 exit /b %errorlevel%
@@ -55,7 +60,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Native build failed: $LASTEXITCODE" }
 }
 finally {
-    Remove-Item $tmpCmd,$selfTestOut,$probeOut,$probePass,$virtualMarker -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmpCmd,$selfTestOut,$loopbackSelfTestOut,$probeOut,$probePass,$virtualMarker -Force -ErrorAction SilentlyContinue
     Remove-Item Env:CUBE7_EARLYHOOK_PASSFILE -ErrorAction SilentlyContinue
 }
 
