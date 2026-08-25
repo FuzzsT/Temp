@@ -3,6 +3,22 @@ using System.Text;
 
 namespace Cube7Bridge;
 
+public sealed record LoopbackRuntimePlan(
+    bool StartExternalServer,
+    bool WriteInjectionProfile,
+    bool UseInjectedResponder)
+{
+    public static LoopbackRuntimePlan From(VirtualLaserCubeConfig cfg)
+    {
+        ArgumentNullException.ThrowIfNull(cfg);
+        bool active = cfg.Enabled && cfg.NetworkServerEnabled;
+        return new LoopbackRuntimePlan(
+            StartExternalServer: active,
+            WriteInjectionProfile: active,
+            UseInjectedResponder: false);
+    }
+}
+
 public sealed record LoopbackInjectionProfile(
     bool Enabled,
     string Address,
