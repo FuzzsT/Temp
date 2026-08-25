@@ -4,6 +4,8 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
+    private const string VirtualMarker = "VirtualLaserCube.enabled";
+
     private static async Task<int> Main(string[] args)
     {
         if (args.Any(a => string.Equals(a, "--self-test", StringComparison.OrdinalIgnoreCase)))
@@ -14,8 +16,9 @@ internal static class Program
         string configPath = args.FirstOrDefault(a => a.StartsWith("--config="))?.Split('=', 2)[1] ?? "config.json";
         var cfg = BridgeConfig.Load(configPath);
 
-        Console.WriteLine("Cube7 LaserOS Full Bridge 0.2.0");
-        Console.WriteLine("Trace-first build: no BLE characteristic writes and no interlock bypass.");
+        Console.WriteLine("Cube7 LaserOS Full Bridge 0.3.0");
+        Console.WriteLine("Virtual LaserCube discovery enabled; physical-output=DISABLED.");
+        Console.WriteLine("No BLE characteristic payload writes and no interlock/E-stop bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
         using var cts = new CancellationTokenSource();
@@ -23,32 +26,72 @@ internal static class Program
 
         var tasks = new List<Task>();
         CaptureWriter? writer = null;
+        string markerPath = Path.Combine(AppContext.BaseDirectory, VirtualMarker);
 
-        if (mode is "full" or "trace")
+        try
         {
-            writer = new CaptureWriter(cfg.CaptureDirectory);
-            Console.WriteLine($"capture={writer.DirectoryPath}");
-            var server = new HookCaptureServer(writer);
-            tasks.Add(server.RunAsync(cts.Token));
-            if (cfg.AutoInject) StartInjector(cfg.LaserOsProcessName);
-        }
+            if (mode is "full" or "trace")
+            {
+                writer = new CaptureWriter(cfg.CaptureDirectory);
+                Console.WriteLine($"capture={writer.DirectoryPath}");
+                var captureServer = new HookCaptureServer(writer);
+                tasks.Add(captureServer.RunAsync(cts.Token));
 
-        if (mode is "full" or "ble")
+                ConfigureVirtualMarker(markerPath, cfg.VirtualLaserCube.Enabled);
+                if (cfg.VirtualLaserCube.Enabled)
+                    Console.WriteLine("[virtual] injected responder armed for LaserCube UDP 45456/45457/45458");
+
+                if (cfg.VirtualLaserCube.Enabled && cfg.VirtualLaserCube.NetworkServerEnabled)
+                {
+                    Console.WriteLine("[virtual] external UDP responder enabled (diagnostic mode)");
+                    var networkServer = new VirtualLaserCubeServer(cfg.VirtualLaserCube, writer.DirectoryPath);
+                    tasks.Add(networkServer.RunAsync(cts.Token));
+                }
+
+                if (cfg.AutoInject) StartInjector(cfg.LaserOsProcessName);
+            }
+            else
+            {
+                ConfigureVirtualMarker(markerPath, false);
+            }
+
+            if (mode is "full" or "ble")
+            {
+                var ble = new BleScanner(cfg.Ble, cfg.CaptureDirectory);
+                tasks.Add(ble.RunAsync(cts.Token));
+            }
+
+            if (tasks.Count == 0)
+            {
+                Console.WriteLine("Use --mode=full, --mode=trace, or --mode=ble");
+                return 2;
+            }
+
+            try { await Task.WhenAll(tasks); }
+            catch (OperationCanceledException) { }
+            return 0;
+        }
+        finally
         {
-            var ble = new BleScanner(cfg.Ble, cfg.CaptureDirectory);
-            tasks.Add(ble.RunAsync(cts.Token));
+            ConfigureVirtualMarker(markerPath, false);
+            writer?.Dispose();
         }
+    }
 
-        if (tasks.Count == 0)
+    private static void ConfigureVirtualMarker(string markerPath, bool enabled)
+    {
+        try
         {
-            Console.WriteLine("Use --mode=full, --mode=trace, or --mode=ble");
-            return 2;
+            if (enabled)
+                File.WriteAllText(markerPath, "FullBridge 0.3.0 virtual LaserCube; physical-output=DISABLED\n");
+            else if (File.Exists(markerPath))
+                File.Delete(markerPath);
         }
-
-        try { await Task.WhenAll(tasks); }
-        catch (OperationCanceledException) { }
-        finally { writer?.Dispose(); }
-        return 0;
+        catch (Exception ex)
+        {
+            if (enabled) throw new IOException($"Cannot arm virtual LaserCube marker '{markerPath}': {ex.Message}", ex);
+            Console.WriteLine($"[virtual] marker cleanup warning: {ex.Message}");
+        }
     }
 
     private static void StartInjector(string processName)
