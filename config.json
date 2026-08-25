@@ -11,7 +11,7 @@
     "laserOsExePath": "C:\\Program Files\\LaserOS\\LaserOS.exe"
   },
   "virtualLaserCube": {
-    "enabled": true,
+    "enabled": false,
     "networkServerEnabled": false,
     "bindAddress": "0.0.0.0",
     "alivePort": 45456,
@@ -27,8 +27,8 @@
   },
   "ble": {
     "nameContains": ["CUBE", "Laserworld"],
-    "autoConnect": true,
-    "subscribeNotifications": true,
+    "autoConnect": false,
+    "subscribeNotifications": false,
     "address": "E4:66:E5:D2:6E:38"
   }
 }
