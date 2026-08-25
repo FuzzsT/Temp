@@ -18,6 +18,13 @@ foreach ($name in $required) {
   Write-Host ("[OK] {0} ({1} bytes)" -f $name, $size)
 }
 
+$probeMarker = Join-Path $BinDir 'VirtualLaserCube.enabled'
+if (Test-Path $probeMarker) {
+  Write-Error 'SAFETY_FAIL: VirtualLaserCube.enabled probe marker leaked into release output'
+  exit 1
+}
+Write-Host '[OK] no VirtualLaserCube.enabled probe marker in runtime output'
+
 foreach ($name in @('Cube7Bridge.exe','Cube7Injector.exe','LaserOSHook.dll')) {
   $p = Join-Path $BinDir $name
   $bytes = [System.IO.File]::ReadAllBytes($p)
