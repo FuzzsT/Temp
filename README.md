@@ -1,36 +1,71 @@
-# Cube7 LaserOS Full Bridge 0.3.1 EARLYHOOK
+# Cube7 LaserOS Full Bridge 0.3.2 — REAL 0x27 DISCOVERY
 
 Windows x64 bridge do diagnostyki **LaserOS.exe** oraz **Laserworld CUBE 7**.
 
-## 0.3.1 — fix `NO LASER`
+## 0.3.2 — rzeczywisty root cause `NO LASER`
 
-W 0.3.0 `LaserOSHook.dll` mógł zostać poprawnie załadowany (`PID=... OK`), ale nadal nie przechwytywać discovery LaserOS. Przyczyna została odtworzona testem integracyjnym: klasyczne funkcje Winsock `sendto` i `recvfrom` są często importowane z `WS2_32.dll` **po ordinalach** (`sendto=20`, `recvfrom=17`), a poprzedni IAT hook obsługiwał wyłącznie importy po nazwie.
+Analiza `LaserOS.exe` oraz publicznego `libLaserdockCore` wykazała, że discovery sieciowego LaserCube **nie zaczyna się od `0x77`**.
 
-0.3.1 patchuje zarówno importy po nazwie, jak i ordinale Winsock. CI uruchamia prawdziwy klient testowy: proces startuje jako `CREATE_SUSPENDED`, dostaje `LaserOSHook.dll` przed uruchomieniem, wysyła `0x77 GET_FULL_INFO` i musi odebrać prawidłową odpowiedź 64 B. Release nie jest pakowany, jeśli ten test nie przejdzie.
+Rzeczywista sekwencja LaserOS jest następująca:
 
-## Auto EarlyHook
+1. LaserOS wysyła jeden bajt `0x27` (`LASERCUBE_GET_ALIVE`) na broadcast UDP **45456**.
+2. Urządzenie musi odpowiedzieć **dokładnie `27 00`**.
+3. Dopiero wtedy LaserOS tworzy `LaserdockNetworkDevice` dla adresu nadawcy odpowiedzi.
+4. Nowy obiekt wysyła `0x77 GET_FULL_INFO` na UDP **45457**.
+5. `0x77` musi zwrócić 64 B, z `byte[1]=00` (success) oraz `byte[2]=00` (payload version 0).
 
-`start-full.cmd` obsługuje teraz automatyczny early-hook:
+0.3.1 emulował `0x77`, ale nie `0x27`, więc LaserOS nigdy nie tworzył urządzenia i pola Projector Setup pozostawały `?`.
 
-1. jeżeli LaserOS już działa, FullBridge odczytuje ścieżkę `LaserOS.exe`;
-2. wysyła normalne żądanie zamknięcia okna — **bez force kill**;
-3. uruchamia LaserOS jako `CREATE_SUSPENDED`;
-4. wstrzykuje `LaserOSHook.dll`;
-5. czeka na pierwszy przebieg patchowania IAT;
-6. dopiero wtedy wznawia LaserOS.
+0.3.2 dodaje `0x27 -> 27 00` zarówno do implementacji .NET, jak i natywnego respondera w `LaserOSHook.dll`, oraz poprawia routing portów:
 
-Jeżeli graceful restart się nie powiedzie, bridge pozostawia proces bez wymuszonego zamknięcia i przechodzi na zwykły watcher.
+```text
+0x27 -> UDP 45456
+0x77/0x78/0x80/0x8A -> UDP 45457
+0xA9 -> UDP 45458
+```
 
-## Safety scope
+## EarlyHook dla instalacji użytkownika
 
-- fizyczne wyjście lasera pozostaje wyłączone w warstwie Virtual LaserCube;
-- `SET_OUTPUT 0x80` zmienia wyłącznie stan wirtualny;
-- brak payload writes do BLE;
-- brak bypassu interlock/E-stop.
+Domyślny `config.json` wskazuje wykrytą instalację:
 
-## Wykryty CUBE 7
+```text
+C:\Program Files\LaserOS\LaserOS.exe
+```
 
-Domyślny target w `config.json`:
+`start-full.cmd` uruchamia early-hook:
+
+1. jeżeli LaserOS działa, odczytuje/wykorzystuje ścieżkę EXE i wysyła normalne żądanie zamknięcia;
+2. uruchamia LaserOS jako `CREATE_SUSPENDED`;
+3. wstrzykuje `LaserOSHook.dll`;
+4. czeka na pierwszy przebieg patchowania IAT;
+5. dopiero wtedy wznawia LaserOS.
+
+Nie jest wykonywany force-kill.
+
+## Oczekiwany log 0.3.2
+
+Najważniejsze linie po uruchomieniu `start-full.cmd`:
+
+```text
+Cube7 LaserOS Full Bridge 0.3.2
+[early] ...
+[inject] PID=... OK
+[early] resumed PID=... after hook injection
+[hook] connected
+[TX] ...:45456 1B GET_ALIVE
+[RX] ... 2B GET_ALIVE RESPONSE
+[TX] ...:45457 1B GET_FULL_INFO
+```
+
+Jeżeli po `GET_FULL_INFO` pojawi się:
+
+```text
+SECURITY_REQUEST
+```
+
+czyli opcode `0xB0`, discovery jest już naprawione, a następnym etapem do analizy jest autoryzacja LaserCube (`0xB0/0xB1`). 0.3.2 **nie fałszuje jeszcze odpowiedzi bezpieczeństwa** — loguje te opcode'y, aby można było odtworzyć prawidłową sekwencję na podstawie realnego ruchu.
+
+## Wykryty Laserworld CUBE 7
 
 ```text
 BLE address: E4:66:E5:D2:6E:38
@@ -40,7 +75,14 @@ FFE1:        Read / WriteWithoutResponse / Write / Notify
 FFE2:        WriteWithoutResponse / Write
 ```
 
-FullBridge 0.3.1 nadal używa vendor GATT tylko do READ/NOTIFY.
+BLE pozostaje w 0.3.2 w trybie READ/NOTIFY. Brak vendor payload writes.
+
+## Safety scope
+
+- fizyczne wyjście lasera pozostaje wyłączone w warstwie Virtual LaserCube;
+- `SET_OUTPUT 0x80` zmienia tylko stan wirtualny;
+- brak BLE characteristic payload writes;
+- brak bypassu interlock/E-stop.
 
 ## Uruchomienie
 
@@ -48,22 +90,7 @@ FullBridge 0.3.1 nadal używa vendor GATT tylko do READ/NOTIFY.
 start-full.cmd
 ```
 
-Przy działającym LaserOS oczekiwane logi zawierają m.in.:
-
-```text
-[early] detected LaserOS path: ...\LaserOS.exe
-[early] LaserOS already running PID=...; restarting gracefully so discovery is hooked before startup.
-[early] suspended-launch injector started; LaserOS will resume only after LaserOSHook.dll is loaded.
-[early] CREATE_SUSPENDED exe=...\LaserOS.exe
-[inject] PID=... OK
-[early] hook settle barrier complete
-[early] resumed PID=... after hook injection
-[hook] connected
-```
-
-Virtual LaserCube obsługuje discovery/trace dla portów `45456`, `45457`, `45458` oraz znane komendy `0x77`, `0x78`, `0x80`, `0x8A`, `0xA9`.
-
-## Self-test
+Self-test:
 
 ```bat
 bin\Cube7Bridge.exe --self-test
@@ -72,13 +99,13 @@ bin\Cube7Bridge.exe --self-test
 Oczekiwany wynik:
 
 ```text
-SELFTEST PASS: protocol + UDP virtual device + BLE target parser; physical-output=DISABLED
+SELFTEST PASS: 0x27 discovery + protocol + UDP virtual device + BLE target parser; physical-output=DISABLED
 ```
 
 ## Runtime
 
 ```text
-Cube7-LaserOS-FullBridge-0.3.1-win-x64/
+Cube7-LaserOS-FullBridge-0.3.2-win-x64/
 ├── start-full.cmd
 ├── start-trace.cmd
 ├── start-ble.cmd
@@ -103,4 +130,4 @@ Weryfikacja:
 
 Prawidłowy wynik: `FULLBRIDGE_READY=1`.
 
-Jeżeli LaserOS działa jako administrator, FullBridge również powinien być uruchomiony z tym samym poziomem integralności. Build docelowy jest x64.
+Jeżeli LaserOS działa jako administrator, FullBridge powinien zostać uruchomiony z tym samym poziomem integralności. Build docelowy jest x64.
