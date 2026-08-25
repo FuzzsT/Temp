@@ -13,7 +13,10 @@ public:
     std::vector<uint8_t> Handle(const std::vector<uint8_t>& payload) {
         if (payload.empty()) return {};
         switch (payload[0]) {
-        case 0x77: return FullInfo();
+        case 0x27:
+            return {0x27, 0x00};
+        case 0x77:
+            return FullInfo();
         case 0x78:
             if (payload.size() >= 2) bufferResponseEnabled_ = payload[1] != 0;
             return {0x78};
@@ -58,6 +61,8 @@ private:
     std::vector<uint8_t> FullInfo() const {
         std::vector<uint8_t> b(64, 0);
         b[0] = 0x77;
+        b[1] = 0x00; // command result: success
+        b[2] = 0x00; // full-info payload version
         b[3] = 1;
         b[4] = 0;
         b[5] = outputRequested_ ? 1 : 0;
