@@ -1,17 +1,24 @@
 {
   "name": "Cube7-LaserOS-FullBridge",
-  "version": "0.4.1",
-  "release": "HARDENED-DRYRUN",
+  "version": "0.4.2",
+  "release": "BLE-UART-PROTOCOL-TRACE",
   "architecture": "win-x64",
   "laser_os_verified_sha256": "21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c",
   "physical_output_default": false,
   "ble_payload_writes_default": false,
+  "ble_protocol_profile": "community-aa-sum-v1-candidate",
+  "ble_protocol_confidence": "UNVERIFIED",
+  "ble_protocol_transmit": false,
   "features": [
     "verified-laseros-preflight",
     "pipeline-status",
     "renderer-statistics",
     "cube7-normalized-dryrun-translator",
-    "automatic-safe-support-bundle"
+    "automatic-safe-support-bundle",
+    "ffe0-ffe1-ffe2-gatt-profile",
+    "passive-ffe1-notification-trace",
+    "aa-cmd-len-sum-candidate-decoder",
+    "candidate-packet-dryrun-generator"
   ],
   "required_runtime_files": [
     "bin/Cube7Bridge.exe",
