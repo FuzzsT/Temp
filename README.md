@@ -1,141 +1,136 @@
-# Cube7 LaserOS Full Bridge 0.3.3 — AUTH TRACE
+# Cube7 LaserOS Full Bridge 0.4.1 — HARDENED-DRYRUN
 
 Windows x64 bridge do diagnostyki **LaserOS.exe** oraz **Laserworld CUBE 7**.
 
-## 0.3.3 — pasywna diagnostyka `0xB0/0xB1`
+## Status 0.4.1
 
-0.3.2 naprawił rzeczywisty etap discovery `0x27 -> 27 00`. 0.3.3 dodaje automatyczny tracker całego handshake'u LaserOS:
+0.4.1 porządkuje gałąź 0.4.x i dodaje warstwę hardeningu wokół istniejącego renderer tap. Fizyczne wyjście lasera pozostaje domyślnie i technicznie wyłączone w tym wydaniu.
 
-```text
-DISCOVERY_REQUEST
-DISCOVERY_ACCEPTED
-FULL_INFO_REQUEST
-FULL_INFO_ACCEPTED
-AUTH_REQUEST
-AUTH_REQUEST_ACK
-AUTH_RESPONSE_QUERY
-AUTH_RESPONSE_CAPTURED
-POST_AUTH_DEVICE_TRAFFIC
-```
+Najważniejsze elementy:
 
-Każda zmiana etapu jest wypisywana jako `[stage] ...` oraz zapisywana w:
-
-```text
-captures/<timestamp>/handshake-summary.ndjson
-```
-
-Podsumowanie zawiera długość payloadu i SHA-256, dzięki czemu można porównywać kolejne challenge/response bez ręcznego przeglądania pełnego hexdumpu.
-
-FullBridge **nie generuje syntetycznego `AUTH OK`**. Tracker jest pasywny i służy do ustalenia, czy LaserOS zatrzymuje się na discovery, full-info, ACK `0xB0`, odczycie `0xB1`, czy dopiero na własnym callbacku weryfikującym odpowiedź.
-
-## Wynik analizy konkretnego LaserOS 0.18.1
-
-Przeanalizowany plik:
-
-```text
-LaserOS.exe
-SHA-256 21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c
-```
-
-Ten build importuje z `ldCore.dll` zarówno callback generatora żądania bezpieczeństwa, jak i callback weryfikujący odpowiedź — osobno dla Network i USB managera. Oba transporty dostają te same funkcje LaserOS.
-
-Szczegółowy zapis analizy znajduje się w:
-
-```text
-docs/LaserOS-0.18.1-auth-flow.md
-```
-
-## 0.3.2 — rzeczywisty root cause `NO LASER`
-
-Analiza `LaserOS.exe` oraz publicznego `libLaserdockCore` wykazała, że discovery sieciowego LaserCube **nie zaczyna się od `0x77`**.
-
-Rzeczywista sekwencja LaserOS jest następująca:
-
-1. LaserOS wysyła jeden bajt `0x27` (`LASERCUBE_GET_ALIVE`) na broadcast UDP **45456**.
-2. Urządzenie musi odpowiedzieć **dokładnie `27 00`**.
-3. Dopiero wtedy LaserOS tworzy `LaserdockNetworkDevice` dla adresu nadawcy odpowiedzi.
-4. Nowy obiekt wysyła `0x77 GET_FULL_INFO` na UDP **45457**.
-5. `0x77` musi zwrócić 64 B, z `byte[1]=00` (success) oraz `byte[2]=00` (payload version 0).
-
-0.3.1 emulował `0x77`, ale nie `0x27`, więc LaserOS nigdy nie tworzył urządzenia i pola Projector Setup pozostawały `?`.
-
-Routing:
-
-```text
-0x27 -> UDP 45456
-0x77/0x78/0x80/0x82/0x8A/0x8D/0xA0/0xB0/0xB1 -> UDP 45457
-0xA9/0x9A -> UDP 45458
-```
-
-## EarlyHook dla instalacji użytkownika
-
-Domyślny `config.json` wskazuje wykrytą instalację:
-
-```text
-C:\Program Files\LaserOS\LaserOS.exe
-```
-
-`start-full.cmd` uruchamia early-hook:
-
-1. jeżeli LaserOS działa, używa ścieżki EXE i wysyła normalne żądanie zamknięcia;
-2. uruchamia LaserOS jako `CREATE_SUSPENDED`;
-3. wstrzykuje `LaserOSHook.dll`;
-4. czeka na pierwszy przebieg patchowania IAT;
-5. dopiero wtedy wznawia LaserOS.
-
-Nie jest wykonywany force-kill.
-
-## Oczekiwany log 0.3.3
-
-```text
-Cube7 LaserOS Full Bridge 0.3.3
-[early] ...
-[inject] PID=... OK
-[hook] connected
-[stage] DISCOVERY_REQUEST ...
-[stage] DISCOVERY_ACCEPTED ...
-[stage] FULL_INFO_REQUEST ...
-[stage] FULL_INFO_ACCEPTED ...
-```
-
-Jeżeli LaserOS przejdzie dalej:
-
-```text
-[stage] AUTH_REQUEST ...
-[stage] AUTH_REQUEST_ACK ...
-[stage] AUTH_RESPONSE_QUERY ...
-[stage] AUTH_RESPONSE_CAPTURED ...
-```
-
-Jeżeli pojawi się `AUTH_RESPONSE_CAPTURED`, ale nie `POST_AUTH_DEVICE_TRAFFIC`, najbardziej prawdopodobnym blokiem jest callback weryfikujący odpowiedź w samym LaserOS.
-
-## Wykryty Laserworld CUBE 7
-
-```text
-BLE address: E4:66:E5:D2:6E:38
-BLE name:    BLEAPP_C77D_V217
-Service:     0000ffe0-0000-1000-8000-00805f9b34fb
-FFE1:        Read / WriteWithoutResponse / Write / Notify
-FFE2:        WriteWithoutResponse / Write
-```
-
-BLE pozostaje w 0.3.3 w trybie READ/NOTIFY. Brak vendor payload writes.
-
-## Safety scope
-
-- fizyczne wyjście lasera pozostaje wyłączone w warstwie Virtual LaserCube;
-- `SET_OUTPUT 0x80` zmienia tylko stan wirtualny;
-- brak BLE characteristic payload writes;
+- preflight konkretnego `LaserOS.exe` z SHA-256;
+- fail-closed dla niezweryfikowanego builda LaserOS, gdy `requireVerifiedSha256=true`;
+- czytelny status całego pipeline'u;
+- statystyki renderer frames;
+- translator `RendererFrame -> Cube7NormalizedFrame` działający wyłącznie w trybie dry-run;
+- automatyczny `support-bundle.zip` po zakończeniu sesji;
+- support bundle zawiera tylko bezpieczne logi/summaries/config — nie dodaje domyślnie `.rawbin` ani `.bin` z surowymi payloadami auth;
+- brak BLE payload writes;
 - brak bypassu interlock/E-stop;
-- brak syntetycznego pozytywnego wyniku autoryzacji.
+- `PHYSICAL_OUTPUT=DISABLED` jest niezmiennikiem 0.4.1.
+
+## Zweryfikowany LaserOS
+
+```text
+LaserOS x64 v0.18.1 BETA
+C:\Program Files\LaserOS\LaserOS.exe
+SHA-256:
+21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c
+```
+
+Domyślna konfiguracja wymaga dokładnie tego SHA-256. Jeśli plik jest inny, FullBridge zatrzyma injection przed uruchomieniem hooka i pokaże `LASEROS_PREFLIGHT BLOCKED`.
+
+## Status pipeline
+
+Co kilka sekund konsola drukuje m.in.:
+
+```text
+LASEROS_PREFLIGHT    OK         LaserOS SHA-256 verified
+LASEROS_HOOK         OK         LaserOSHook.dll connected
+DISCOVERY_0x27       OK         27 00 accepted
+FULL_INFO_0x77       OK         64-byte response accepted
+AUTH_B0_B1           WAITING    no auth traffic observed
+RENDERER_TAP         OK         frames=120 rate=30000pps points=842 max=900
+CUBE7_BLE            OK         E4:66:E5:D2:6E:38 ...
+TRANSLATOR           DRY-RUN    normalized=842 physical-output=OFF
+PHYSICAL_OUTPUT      DISABLED   hard safety invariant
+```
+
+`AUTH_B0_B1=CAPTURED` oznacza, że odpowiedź B1 została przechwycona, ale nie jest to równoznaczne z zaakceptowaną autoryzacją. `AUTH_B0_B1=OK` pojawia się dopiero po zaobserwowaniu ruchu post-auth.
+
+## Renderer tap
+
+0.4.x przechwytuje ramki renderer przed warstwą sprzętową LaserCube. Pliki sesji:
+
+```text
+captures/<timestamp>/
+  capture.ndjson
+  handshake-summary.ndjson
+  renderer-frames.ndjson
+  renderer-frames.bin
+  translator-dryrun.ndjson
+  ble-*.ndjson
+```
+
+`translator-dryrun.ndjson` zawiera znormalizowane punkty 12-bit:
+
+```text
+X,Y = 0..4095
+R,G,B = 0..4095
+```
+
+Translator nie wysyła tych punktów do CUBE 7.
+
+## Support bundle
+
+Po `Ctrl+C` FullBridge automatycznie tworzy:
+
+```text
+captures/<timestamp>/support-bundle.zip
+```
+
+W środku znajdują się:
+
+```text
+support/status.json
+support/preflight.json
+support/renderer-stats.json
+support/safety.json
+config/config.json
+captures/*.ndjson
+```
+
+Surowe pliki binarne są celowo wykluczone z automatycznego support bundle, ponieważ mogą zawierać materiał związany z handshake/auth.
+
+## BLE target CUBE 7
+
+```text
+Address: E4:66:E5:D2:6E:38
+Name:    BLEAPP_C77D_V217
+Service: 0000ffe0-0000-1000-8000-00805f9b34fb
+FFE1:    Read / WriteWithoutResponse / Write / Notify
+FFE2:    WriteWithoutResponse / Write
+```
+
+Domyślne 0.4.1:
+
+```text
+autoConnect=false
+subscribeNotifications=false
+allowBleWrites=false
+```
+
+Skan BLE służy do identyfikacji urządzenia i statusu. Nie są wysyłane vendor payload writes.
 
 ## Uruchomienie
+
+Rozpakuj release do pustego katalogu i uruchom:
 
 ```bat
 start-full.cmd
 ```
 
-Self-test:
+FullBridge przeprowadzi preflight, uruchomi/zhookuje LaserOS i rozpocznie renderer/BLE diagnostics.
+
+Tryby:
+
+```bat
+start-full.cmd
+start-trace.cmd
+start-ble.cmd
+```
+
+## Self-test
 
 ```bat
 bin\Cube7Bridge.exe --self-test
@@ -144,13 +139,13 @@ bin\Cube7Bridge.exe --self-test
 Oczekiwany wynik:
 
 ```text
-SELFTEST PASS: 0x27 discovery + protocol + passive B0/B1 auth trace + UDP virtual device + BLE target parser; physical-output=DISABLED
+SELFTEST PASS: hardened preflight + pipeline status + renderer stats + dry-run translator + support bundle + renderer tap + protocol; physical-output=DISABLED
 ```
 
 ## Runtime
 
 ```text
-Cube7-LaserOS-FullBridge-0.3.3-win-x64/
+Cube7-LaserOS-FullBridge-0.4.1-HARDENED-DRYRUN-win-x64/
 ├── start-full.cmd
 ├── start-trace.cmd
 ├── start-ble.cmd
@@ -167,7 +162,7 @@ Cube7-LaserOS-FullBridge-0.3.3-win-x64/
     └── config.json
 ```
 
-Weryfikacja:
+Weryfikacja release:
 
 ```powershell
 .\verify-release.ps1 -BinDir .\bin
@@ -175,4 +170,4 @@ Weryfikacja:
 
 Prawidłowy wynik: `FULLBRIDGE_READY=1`.
 
-Jeżeli LaserOS działa jako administrator, FullBridge powinien zostać uruchomiony z tym samym poziomem integralności. Build docelowy jest x64.
+Jeśli LaserOS działa z podwyższonym poziomem integralności, FullBridge powinien być uruchomiony z tym samym poziomem uprawnień, aby injection mogło się udać.
