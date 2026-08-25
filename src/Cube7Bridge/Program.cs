@@ -29,6 +29,7 @@ internal static class Program
 
         var tasks = new List<Task>();
         CaptureWriter? writer = null;
+        HookCaptureServer? captureServer = null;
         string markerPath = Path.Combine(AppContext.BaseDirectory, VirtualMarker);
 
         try
@@ -37,7 +38,7 @@ internal static class Program
             {
                 writer = new CaptureWriter(cfg.CaptureDirectory);
                 Console.WriteLine($"capture={writer.DirectoryPath}");
-                var captureServer = new HookCaptureServer(writer);
+                captureServer = new HookCaptureServer(writer);
                 tasks.Add(captureServer.RunAsync(cts.Token));
 
                 ConfigureVirtualMarker(markerPath, cfg.VirtualLaserCube.Enabled);
@@ -79,6 +80,7 @@ internal static class Program
         finally
         {
             ConfigureVirtualMarker(markerPath, false);
+            captureServer?.Dispose();
             writer?.Dispose();
         }
     }
