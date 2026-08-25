@@ -35,6 +35,10 @@ cl /nologo /std:c++17 /EHsc /O2 /Fe:"$exeOut" Injector.cpp
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /O2 /Fe:"$probeOut" LaserOSEarlyHookProbe.cpp Ws2_32.lib
 if errorlevel 1 exit /b %errorlevel%
+echo ==== EARLYHOOK PROBE IMPORTS ====
+dumpbin /nologo /imports "$probeOut"
+if errorlevel 1 exit /b %errorlevel%
+echo ==== END EARLYHOOK PROBE IMPORTS ====
 copy /y nul "$out\VirtualLaserCube.enabled" >nul
 "$exeOut" --launch "$probeOut" --dll "$dllOut" --once
 if errorlevel 1 exit /b %errorlevel%
