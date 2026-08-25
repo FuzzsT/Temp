@@ -13,7 +13,7 @@ public static class SelfTest
             ProtocolModelTests();
             BluetoothAddressTests();
             await UdpServerTestsAsync();
-            Console.WriteLine("SELFTEST PASS: protocol + UDP virtual device + BLE target parser; physical-output=DISABLED");
+            Console.WriteLine("SELFTEST PASS: 0x27 discovery + protocol + UDP virtual device + BLE target parser; physical-output=DISABLED");
             return 0;
         }
         catch (Exception ex)
@@ -28,9 +28,15 @@ public static class SelfTest
         var cfg = new VirtualLaserCubeConfig { BufferSize = 6000, DacRate = 30000, MaxDacRate = 30000, ModelName = "LaserCube Virtual CUBE7" };
         var state = new VirtualLaserCubeState { BufferFree = cfg.BufferSize };
 
+        // LaserOS/libLaserdockCore discovery starts with 0x27 on UDP 45456
+        // and accepts a device only after the exact two-byte response 27 00.
+        var alive = VirtualLaserCubeProtocol.HandleCommand([0x27], state, cfg);
+        Require(alive.Response is [0x27, 0x00], "0x27 alive response must be 27 00");
+
         var info = VirtualLaserCubeProtocol.BuildFullInfo(cfg, state);
         Require(info.Length == 64, "0x77 response length");
         Require(info[0] == 0x77, "0x77 opcode");
+        Require(info[1] == 0x00 && info[2] == 0x00, "0x77 result/payload-version bytes");
         Require(BinaryPrimitives.ReadUInt32LittleEndian(info.AsSpan(10, 4)) == 30000, "DAC rate");
         Require(BinaryPrimitives.ReadUInt16LittleEndian(info.AsSpan(21, 2)) == 6000, "buffer size");
 
@@ -84,8 +90,11 @@ public static class SelfTest
         using var udp = new UdpClient(AddressFamily.InterNetwork);
         udp.Client.ReceiveTimeout = 2000;
 
-        var info = await RoundTripAsync(udp, cfg.AlivePort, [0x77], cts.Token);
-        Require(info.Length == 64 && info[0] == 0x77, "UDP alive 0x77");
+        var alive = await RoundTripAsync(udp, cfg.AlivePort, [0x27], cts.Token);
+        Require(alive is [0x27, 0x00], "UDP discovery 0x27 -> 27 00");
+
+        var info = await RoundTripAsync(udp, cfg.CommandPort, [0x77], cts.Token);
+        Require(info.Length == 64 && info[0] == 0x77 && info[1] == 0 && info[2] == 0, "UDP command 0x77 full info");
 
         var enable = await RoundTripAsync(udp, cfg.CommandPort, [0x78, 0x01], cts.Token);
         Require(enable is [0x78], "UDP 0x78");
