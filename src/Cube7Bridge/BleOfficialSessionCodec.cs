@@ -4,12 +4,17 @@ using System.Text;
 
 namespace Cube7Bridge;
 
-public sealed record BleCryptoContext(byte[] Key, byte[] Iv)
+public sealed class BleCryptoContext
 {
-    public BleCryptoContext : this(Key, Iv)
+    public byte[] Key { get; }
+    public byte[] Iv { get; }
+
+    public BleCryptoContext(byte[] key, byte[] iv)
     {
-        if (Key is null || Key.Length != 16) throw new ArgumentException("AES-128 key must be 16 bytes", nameof(Key));
-        if (Iv is null || Iv.Length != 16) throw new ArgumentException("AES-CTR IV must be 16 bytes", nameof(Iv));
+        if (key is null || key.Length != 16) throw new ArgumentException("AES-128 key must be 16 bytes", nameof(key));
+        if (iv is null || iv.Length != 16) throw new ArgumentException("AES-CTR IV must be 16 bytes", nameof(iv));
+        Key = key.ToArray();
+        Iv = iv.ToArray();
     }
 }
 
@@ -140,18 +145,18 @@ public static class BleOfficialSessionCodec
         if (status != 0) return new BleConnectSession { Status = status, Address = address };
 
         int pos = 4;
-        ReadOnlySpan<byte> Take(int count)
+        byte[] Take(int count)
         {
             if (count < 0 || pos + count > message.Length) throw new ArgumentException("connect response is truncated", nameof(message));
-            var result = message.AsSpan(pos, count);
+            byte[] result = message.AsSpan(pos, count).ToArray();
             pos += count;
             return result;
         }
 
         int bufferMax = BinaryPrimitives.ReadUInt16BigEndian(Take(2));
         int connectionInterval = BinaryPrimitives.ReadUInt16BigEndian(Take(2));
-        string fwBle = string.Join('.', Take(3).ToArray().Select(x => x.ToString()));
-        string fwCpu = string.Join('.', Take(3).ToArray().Select(x => x.ToString()));
+        string fwBle = string.Join('.', Take(3).Select(x => x.ToString()));
+        string fwCpu = string.Join('.', Take(3).Select(x => x.ToString()));
         int dataFormat = Take(1)[0];
         int sceneMax = Take(1)[0];
         int activateType = Take(1)[0];
@@ -164,32 +169,32 @@ public static class BleOfficialSessionCodec
         int testFw = Take(1)[0];
         int extLen = Take(1)[0];
         int availableExt = Math.Min(extLen, message.Length - pos);
-        byte[] ext = Take(availableExt).ToArray();
+        byte[] ext = Take(availableExt);
 
         int epos = 0;
-        ReadOnlySpan<byte> ExtTake(int count)
+        byte[] ExtTake(int count)
         {
             if (count < 0 || epos + count > ext.Length)
             {
                 epos = ext.Length;
-                return ReadOnlySpan<byte>.Empty;
+                return [];
             }
-            var result = ext.AsSpan(epos, count);
+            byte[] result = ext.AsSpan(epos, count).ToArray();
             epos += count;
             return result;
         }
 
-        ExtTake(4); // userKey
-        ExtTake(4); // userAuth
-        ExtTake(4); // appSN
-        byte[] appVerRaw = ExtTake(3).ToArray();
-        ExtTake(1); // appProfile
+        ExtTake(4);
+        ExtTake(4);
+        ExtTake(4);
+        byte[] appVerRaw = ExtTake(3);
+        ExtTake(1);
         string appCompany = DecodeField(ExtTake(16));
-        byte[] protocolsRaw = ExtTake(3).ToArray();
-        ExtTake(1); // resourceAuth
-        ExtTake(3); // resourceVer
-        byte[] randomRaw = ExtTake(4).ToArray();
-        ExtTake(1); // contract
+        byte[] protocolsRaw = ExtTake(3);
+        ExtTake(1);
+        ExtTake(3);
+        byte[] randomRaw = ExtTake(4);
+        ExtTake(1);
 
         return new BleConnectSession
         {
@@ -273,7 +278,7 @@ public static class BleOfficialSessionCodec
         return output;
     }
 
-    private static string DecodeField(ReadOnlySpan<byte> raw) => Encoding.Latin1.GetString(raw).Replace("\0", string.Empty);
+    private static string DecodeField(byte[] raw) => Encoding.Latin1.GetString(raw).Replace("\0", string.Empty);
 
     private static string Dotted(byte[] values) => values.Length == 0 ? string.Empty : string.Join('.', values.Select(x => x.ToString()));
 
