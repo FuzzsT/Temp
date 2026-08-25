@@ -1,0 +1,13 @@
+{
+  "laserOsProcessName": "LaserOS.exe",
+  "autoInject": true,
+  "traceOnly": true,
+  "allowBleWrites": false,
+  "captureDirectory": "captures",
+  "ble": {
+    "nameContains": ["CUBE", "Laserworld"],
+    "autoConnect": true,
+    "subscribeNotifications": true,
+    "address": null
+  }
+}

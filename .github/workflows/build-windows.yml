@@ -1,0 +1,24 @@
+name: build-windows
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-x64:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build
+        shell: powershell
+        run: .\build.ps1 -Arch x64 -Publish
+      - name: Package
+        shell: powershell
+        run: Compress-Archive -Path .\bin\* -DestinationPath Cube7-LaserOS-FullBridge-win-x64.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cube7-LaserOS-FullBridge-win-x64
+          path: Cube7-LaserOS-FullBridge-win-x64.zip

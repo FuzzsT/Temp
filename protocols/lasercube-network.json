@@ -1,0 +1,21 @@
+{
+  "transport": "UDP",
+  "ports": {
+    "alive": 45456,
+    "command": 45457,
+    "data": 45458
+  },
+  "opcodes": {
+    "0x77": "GET_FULL_INFO",
+    "0x78": "ENABLE_BUFFER_SIZE_RESPONSE_ON_DATA",
+    "0x80": "SET_OUTPUT",
+    "0x8A": "GET_RINGBUFFER_EMPTY_SAMPLE_COUNT",
+    "0xA9": "SAMPLE_DATA"
+  },
+  "sampleData": {
+    "headerBytes": 4,
+    "pointBytes": 10,
+    "pointLayoutLittleEndian": ["x:u16", "y:u16", "r:u16", "g:u16", "b:u16"]
+  },
+  "note": "Reverse-engineered LaserCube network framing. This is not the Laserworld CUBE 7 BLE protocol."
+}

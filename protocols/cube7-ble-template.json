@@ -1,0 +1,11 @@
+{
+  "device": "Laserworld CUBE 7",
+  "status": "unknown-GATT-to-be-captured",
+  "services": [],
+  "characteristics": [],
+  "rules": {
+    "readKnownReadableCharacteristics": true,
+    "subscribeNotifyIndicate": true,
+    "writeUnknownCharacteristics": false
+  }
+}
