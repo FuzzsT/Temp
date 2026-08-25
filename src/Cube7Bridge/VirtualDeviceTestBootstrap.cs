@@ -11,6 +11,7 @@ internal static class VirtualDeviceTestBootstrap
         {
             VirtualDeviceEmulationTests.Run();
             BleOfficialSessionTests.Run();
+            BleOfficialSessionRuntimeTests.Run();
         }
     }
 }
