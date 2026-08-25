@@ -37,8 +37,8 @@
   },
   "ble": {
     "nameContains": ["CUBE", "Laserworld"],
-    "autoConnect": false,
-    "subscribeNotifications": false,
+    "autoConnect": true,
+    "subscribeNotifications": true,
     "address": "E4:66:E5:D2:6E:38"
   }
 }
