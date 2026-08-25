@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include "HookCommon.h"
 #include "VirtualLaserCubeNative.h"
+#include "LoopbackAutoconfigNative.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -24,6 +25,8 @@ using WSARecvFrom_t = int (WSAAPI*)(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, s
 using send_t = int (WSAAPI*)(SOCKET, const char*, int, int);
 using recv_t = int (WSAAPI*)(SOCKET, char*, int, int);
 using bind_t = int (WSAAPI*)(SOCKET, const sockaddr*, int);
+using connect_t = int (WSAAPI*)(SOCKET, const sockaddr*, int);
+using WSAConnect_t = int (WSAAPI*)(SOCKET, const sockaddr*, int, LPWSABUF, LPWSABUF, LPQOS, LPQOS);
 using socket_t = SOCKET (WSAAPI*)(int, int, int);
 using closesocket_t = int (WSAAPI*)(SOCKET);
 
@@ -41,6 +44,8 @@ static WSARecvFrom_t Real_WSARecvFrom = nullptr;
 static send_t Real_send = nullptr;
 static recv_t Real_recv = nullptr;
 static bind_t Real_bind = nullptr;
+static connect_t Real_connect = nullptr;
+static WSAConnect_t Real_WSAConnect = nullptr;
 static socket_t Real_socket = nullptr;
 static closesocket_t Real_closesocket = nullptr;
 static renderer_create_frame_t Real_RendererCreateNewFrame = nullptr;
@@ -56,6 +61,8 @@ static bool gLockReady = false;
 static bool gVirtualLockReady = false;
 static bool gRendererLockReady = false;
 static bool gVirtualEnabled = false;
+static bool gLoopbackEnabled = false;
+static LoopbackRouteConfig gLoopbackConfig{};
 static thread_local bool gInHook = false;
 static std::unordered_map<SOCKET, VirtualLaserCubeNative> gVirtualState;
 
@@ -170,8 +177,6 @@ static void EmitRendererFrame(void* renderer) {
 }
 
 static void __fastcall Hook_RendererCreateNewFrame(void* self, int rate, bool flag1, bool flag2) {
-    // createNewFrame is the renderer frame boundary. Flush the previous frame
-    // before letting ldCore start its next cached frame.
     EmitRendererFrame(self);
     if (gRendererLockReady && self) {
         EnterCriticalSection(&gRendererLock);
@@ -202,23 +207,64 @@ static void __fastcall Hook_RendererVertex(void* self, float x, float y, uint32_
 }
 
 static void __fastcall Hook_RendererVertex3(void* self, float x, float y, float z, uint32_t color, int param) {
-    (void)z; // CUBE 7 transport is 2D; preserve XY and packed renderer color.
+    (void)z;
     AppendRendererPoint(self, x, y, color, param);
     if (Real_RendererVertex3) Real_RendererVertex3(self, x, y, z, color, param);
 }
 
-static bool MarkerEnabled() {
+static bool GetMarkerPath(std::wstring& path) {
     if (!gModule) return false;
     wchar_t dllPath[MAX_PATH]{};
     DWORD n = GetModuleFileNameW(gModule, dllPath, MAX_PATH);
     if (!n || n >= MAX_PATH) return false;
-    std::wstring path(dllPath, n);
+    path.assign(dllPath, n);
     auto pos = path.find_last_of(L"\\/");
     if (pos == std::wstring::npos) return false;
     path.resize(pos + 1);
     path += C7HK_VIRTUAL_MARKER;
-    DWORD attrs = GetFileAttributesW(path.c_str());
-    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+    return true;
+}
+
+static bool ReadMarker(std::string& text) {
+    text.clear();
+    std::wstring path;
+    if (!GetMarkerPath(path)) return false;
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(h, &size) || size.QuadPart < 0 || size.QuadPart > 64 * 1024) {
+        CloseHandle(h);
+        return false;
+    }
+    text.resize(static_cast<size_t>(size.QuadPart));
+    DWORD read = 0;
+    BOOL ok = text.empty() || ReadFile(h, text.data(), static_cast<DWORD>(text.size()), &read, nullptr);
+    CloseHandle(h);
+    if (!ok) return false;
+    text.resize(read);
+    return true;
+}
+
+static void LoadRoutingMode() {
+    std::string marker;
+    if (!ReadMarker(marker)) {
+        gVirtualEnabled = false;
+        gLoopbackEnabled = false;
+        return;
+    }
+
+    LoopbackRouteConfig route{};
+    if (!marker.empty() && ParseLoopbackRouteConfig(marker, route)) {
+        gLoopbackConfig = route;
+        gLoopbackEnabled = true;
+        gVirtualEnabled = false;
+        return;
+    }
+
+    // Empty/legacy marker is retained for the native early-hook compatibility probe.
+    gLoopbackEnabled = false;
+    gVirtualEnabled = true;
 }
 
 static uint16_t RemotePort(SOCKET s, const sockaddr* remote) {
@@ -271,7 +317,7 @@ static bool IsVirtualOpcodePort(uint8_t opcode, uint16_t port) {
 }
 
 static bool HandleVirtualTx(SOCKET s, const sockaddr* remote, const uint8_t* data, size_t len) {
-    if (!gVirtualEnabled || !data || len == 0 || !gVirtualLockReady) return false;
+    if (!gVirtualEnabled || gLoopbackEnabled || !data || len == 0 || !gVirtualLockReady) return false;
     const uint16_t port = RemotePort(s, remote);
     if (!IsVirtualOpcodePort(data[0], port)) return false;
     std::vector<uint8_t> payload(data, data + len);
@@ -281,6 +327,13 @@ static bool HandleVirtualTx(SOCKET s, const sockaddr* remote, const uint8_t* dat
     LeaveCriticalSection(&gVirtualLock);
     if (!response.empty() && !InjectResponseToSocket(s, response)) return false;
     return true;
+}
+
+static const sockaddr* RoutedDestination(const sockaddr* original, int originalLen, sockaddr_storage& storage, int& routedLen) {
+    routedLen = originalLen;
+    if (gLoopbackEnabled && RewriteLaserCubeDestination(original, originalLen, gLoopbackConfig, storage, routedLen))
+        return reinterpret_cast<const sockaddr*>(&storage);
+    return original;
 }
 
 static std::vector<uint8_t> FlattenBuffers(LPWSABUF bufs, DWORD count) {
@@ -298,18 +351,48 @@ static std::vector<uint8_t> FlattenBuffers(LPWSABUF bufs, DWORD count) {
     return copy;
 }
 
+static int WSAAPI Hook_bind(SOCKET s, const sockaddr* name, int namelen) {
+    sockaddr_storage rewritten{};
+    int rewrittenLen = namelen;
+    if (gLoopbackEnabled && RewriteLaserCubeClientBind(name, namelen, gLoopbackConfig, rewritten, rewrittenLen))
+        return Real_bind(s, reinterpret_cast<const sockaddr*>(&rewritten), rewrittenLen);
+    return Real_bind(s, name, namelen);
+}
+
+static int WSAAPI Hook_connect(SOCKET s, const sockaddr* name, int namelen) {
+    sockaddr_storage rewritten{};
+    int rewrittenLen = namelen;
+    const sockaddr* target = RoutedDestination(name, namelen, rewritten, rewrittenLen);
+    return Real_connect(s, target, rewrittenLen);
+}
+
+static int WSAAPI Hook_WSAConnect(SOCKET s, const sockaddr* name, int namelen, LPWSABUF callerData, LPWSABUF calleeData, LPQOS sqos, LPQOS gqos) {
+    sockaddr_storage rewritten{};
+    int rewrittenLen = namelen;
+    const sockaddr* target = RoutedDestination(name, namelen, rewritten, rewrittenLen);
+    return Real_WSAConnect(s, target, rewrittenLen, callerData, calleeData, sqos, gqos);
+}
+
 static int WSAAPI Hook_sendto(SOCKET s, const char* buf, int len, int flags, const sockaddr* to, int tolen) {
     if (buf && len > 0) {
         Trace(HookDirection::Tx, HookApi::SendTo, s, to, reinterpret_cast<const uint8_t*>(buf), static_cast<uint32_t>(len));
+        if (gLoopbackEnabled) {
+            sockaddr_storage rewritten{};
+            int rewrittenLen = tolen;
+            const sockaddr* target = RoutedDestination(to, tolen, rewritten, rewrittenLen);
+            return Real_sendto(s, buf, len, flags, target, rewrittenLen);
+        }
         if (HandleVirtualTx(s, to, reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(len))) return len;
     }
     return Real_sendto(s, buf, len, flags, to, tolen);
 }
+
 static int WSAAPI Hook_recvfrom(SOCKET s, char* buf, int len, int flags, sockaddr* from, int* fromlen) {
     int r = Real_recvfrom(s, buf, len, flags, from, fromlen);
     if (r > 0 && buf) Trace(HookDirection::Rx, HookApi::RecvFrom, s, from, reinterpret_cast<const uint8_t*>(buf), static_cast<uint32_t>(r));
     return r;
 }
+
 static int WSAAPI Hook_WSASend(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD sent, DWORD flags, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     auto copy = FlattenBuffers(bufs, count);
     if (!copy.empty()) {
@@ -318,6 +401,7 @@ static int WSAAPI Hook_WSASend(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD sen
     }
     return Real_WSASend(s, bufs, count, sent, flags, ov, cb);
 }
+
 static int WSAAPI Hook_WSARecv(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD received, LPDWORD flags, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     int r = Real_WSARecv(s, bufs, count, received, flags, ov, cb);
     if (r == 0 && received && *received > 0 && bufs && count && !ov) {
@@ -326,14 +410,22 @@ static int WSAAPI Hook_WSARecv(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD rec
     }
     return r;
 }
+
 static int WSAAPI Hook_WSASendTo(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD sent, DWORD flags, const sockaddr* to, int tolen, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     auto copy = FlattenBuffers(bufs, count);
     if (!copy.empty()) {
         Trace(HookDirection::Tx, HookApi::WSASendTo, s, to, copy.data(), static_cast<uint32_t>(copy.size()));
+        if (gLoopbackEnabled) {
+            sockaddr_storage rewritten{};
+            int rewrittenLen = tolen;
+            const sockaddr* target = RoutedDestination(to, tolen, rewritten, rewrittenLen);
+            return Real_WSASendTo(s, bufs, count, sent, flags, target, rewrittenLen, ov, cb);
+        }
         if (HandleVirtualTx(s, to, copy.data(), copy.size()) && !ov) { if (sent) *sent = static_cast<DWORD>(copy.size()); return 0; }
     }
     return Real_WSASendTo(s, bufs, count, sent, flags, to, tolen, ov, cb);
 }
+
 static int WSAAPI Hook_WSARecvFrom(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD received, LPDWORD flags, sockaddr* from, LPINT fromlen, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE cb) {
     int r = Real_WSARecvFrom(s, bufs, count, received, flags, from, fromlen, ov, cb);
     if (r == 0 && received && *received > 0 && bufs && count && !ov) {
@@ -342,6 +434,7 @@ static int WSAAPI Hook_WSARecvFrom(SOCKET s, LPWSABUF bufs, DWORD count, LPDWORD
     }
     return r;
 }
+
 static int WSAAPI Hook_send(SOCKET s, const char* buf, int len, int flags) {
     if (buf && len > 0) {
         Trace(HookDirection::Tx, HookApi::Send, s, nullptr, reinterpret_cast<const uint8_t*>(buf), static_cast<uint32_t>(len));
@@ -349,6 +442,7 @@ static int WSAAPI Hook_send(SOCKET s, const char* buf, int len, int flags) {
     }
     return Real_send(s, buf, len, flags);
 }
+
 static int WSAAPI Hook_recv(SOCKET s, char* buf, int len, int flags) {
     int r = Real_recv(s, buf, len, flags);
     if (r > 0 && buf) Trace(HookDirection::Rx, HookApi::Recv, s, nullptr, reinterpret_cast<const uint8_t*>(buf), static_cast<uint32_t>(r));
@@ -356,6 +450,8 @@ static int WSAAPI Hook_recv(SOCKET s, char* buf, int len, int flags) {
 }
 
 static WORD WinsockOrdinalForName(const char* procName) {
+    if (strcmp(procName, "bind") == 0) return 2;
+    if (strcmp(procName, "connect") == 0) return 4;
     if (strcmp(procName, "recv") == 0) return 16;
     if (strcmp(procName, "recvfrom") == 0) return 17;
     if (strcmp(procName, "send") == 0) return 19;
@@ -412,7 +508,10 @@ static bool PatchIAT(HMODULE module, const char* importedDll, const char* procNa
 
 static void PatchModule(HMODULE module) {
     void* dummy = nullptr;
-    PatchIAT(module, "WS2_32.dll", "sendto", reinterpret_cast<void*>(&Hook_sendto), &dummy);
+    PatchIAT(module, "WS2_32.dll", "bind", reinterpret_cast<void*>(&Hook_bind), &dummy);
+    dummy = nullptr; PatchIAT(module, "WS2_32.dll", "connect", reinterpret_cast<void*>(&Hook_connect), &dummy);
+    dummy = nullptr; PatchIAT(module, "WS2_32.dll", "WSAConnect", reinterpret_cast<void*>(&Hook_WSAConnect), &dummy);
+    dummy = nullptr; PatchIAT(module, "WS2_32.dll", "sendto", reinterpret_cast<void*>(&Hook_sendto), &dummy);
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "recvfrom", reinterpret_cast<void*>(&Hook_recvfrom), &dummy);
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "WSASend", reinterpret_cast<void*>(&Hook_WSASend), &dummy);
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "WSARecv", reinterpret_cast<void*>(&Hook_WSARecv), &dummy);
@@ -421,9 +520,6 @@ static void PatchModule(HMODULE module) {
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "send", reinterpret_cast<void*>(&Hook_send), &dummy);
     dummy = nullptr; PatchIAT(module, "WS2_32.dll", "recv", reinterpret_cast<void*>(&Hook_recv), &dummy);
 
-    // Renderer tap: capture the simulator/render geometry before ldCore's hardware
-    // authentication path. These decorated names are verified against LaserOS x64
-    // v0.18.1 (SHA-256 21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c).
     PatchIAT(module, "ldCore.dll", "?createNewFrame@ldRendererOpenlase@@QEAAXH_N0@Z",
         reinterpret_cast<void*>(&Hook_RendererCreateNewFrame), reinterpret_cast<void**>(&Real_RendererCreateNewFrame));
     PatchIAT(module, "ldCore.dll", "?vertex@ldRendererOpenlase@@QEAAXMMIH@Z",
@@ -459,10 +555,12 @@ static DWORD WINAPI InstallThread(LPVOID) {
     Real_send = reinterpret_cast<send_t>(GetProcAddress(ws2, "send"));
     Real_recv = reinterpret_cast<recv_t>(GetProcAddress(ws2, "recv"));
     Real_bind = reinterpret_cast<bind_t>(GetProcAddress(ws2, "bind"));
+    Real_connect = reinterpret_cast<connect_t>(GetProcAddress(ws2, "connect"));
+    Real_WSAConnect = reinterpret_cast<WSAConnect_t>(GetProcAddress(ws2, "WSAConnect"));
     Real_socket = reinterpret_cast<socket_t>(GetProcAddress(ws2, "socket"));
     Real_closesocket = reinterpret_cast<closesocket_t>(GetProcAddress(ws2, "closesocket"));
 
-    gVirtualEnabled = MarkerEnabled();
+    LoadRoutingMode();
     for (;;) { PatchAllModules(); Sleep(750); }
 }
 
