@@ -1,0 +1,28 @@
+{
+  "device": {
+    "address": "E4:66:E5:D2:6E:38",
+    "name": "BLEAPP_C77D_V217"
+  },
+  "gatt": {
+    "confidence": "CONFIRMED_BY_PROBE",
+    "service": "0000ffe0-0000-1000-8000-00805f9b34fb",
+    "notifyRead": "0000ffe1-0000-1000-8000-00805f9b34fb",
+    "write": "0000ffe2-0000-1000-8000-00805f9b34fb",
+    "negotiatedMtu": 247,
+    "maxAttPayload": 244,
+    "idleFfe1Read": "244 zero bytes"
+  },
+  "candidateProtocol": {
+    "confidence": "UNVERIFIED",
+    "transmitEnabled": false,
+    "profile": "community-aa-sum-v1-candidate",
+    "framing": "AA CMD LEN PAYLOAD CHECKSUM",
+    "checksumCandidate": "sum modulo 256 of all preceding packet bytes",
+    "notes": [
+      "The supplied research contains conflicting command ID tables.",
+      "The supplied research also mentions XOR/CRC alternatives for checksum.",
+      "No command ID is promoted to verified control status in 0.4.2.",
+      "Candidate packets are generated only for comparison and are never written to FFE2."
+    ]
+  }
+}
