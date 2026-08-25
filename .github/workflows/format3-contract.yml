@@ -1,0 +1,17 @@
+name: format3-contract
+on:
+  workflow_dispatch:
+  push:
+    branches: [ fullbridge-0.4.0-renderer-tap ]
+
+jobs:
+  contract:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Run Cube.zip format3 contract
+        shell: powershell
+        run: dotnet run --project .\tests\Cube7Bridge.Format3Contract\Cube7Bridge.Format3Contract.csproj -c Release
