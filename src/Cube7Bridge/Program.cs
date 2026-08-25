@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.3.1";
+    private const string Version = "0.3.2";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
