@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Cube7Bridge;
 
@@ -40,7 +41,7 @@ public sealed class VirtualDeviceState
         lock (_sync)
         {
             Stage = Max(Stage, VirtualDeviceStage.AuthenticationObserved);
-            AuthenticationAccepted = _config.AllowSyntheticAuthentication && false;
+            AuthenticationAccepted = false;
             LastDetail = detail;
             UpdatedUtc = DateTime.UtcNow;
         }
@@ -172,7 +173,7 @@ public sealed class VirtualHandleTable
     public bool Contains(nint handle) => _handles.ContainsKey(handle);
     public bool TryGet(nint handle, out VirtualHandleEntry entry) => _handles.TryGetValue(handle, out entry!);
     public bool Close(nint handle) => _handles.TryRemove(handle, out _);
-    public IReadOnlyCollection<VirtualHandleEntry> Snapshot() => _handles.Values.OrderBy(x => x.Handle).ToArray();
+    public IReadOnlyCollection<VirtualHandleEntry> Snapshot() => _handles.Values.OrderBy(x => x.Handle.ToInt64()).ToArray();
 }
 
 public sealed record DeviceApiTraceEvent(DateTime TimeUtc, string Api, string Family, string Detail);
@@ -232,6 +233,7 @@ public static class DeviceStateReport
             WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
+        options.Converters.Add(new JsonStringEnumConverter());
         File.WriteAllText(path, JsonSerializer.Serialize(new
         {
             timeUtc = DateTime.UtcNow,
