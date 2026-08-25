@@ -14,6 +14,11 @@ public static class VirtualDeviceEmulationTests
         Require(marker.Contains("mode=loopback") && marker.Contains("address=127.0.0.1"), "loopback marker mode/address");
         Require(marker.Contains("alivePort=45456") && marker.Contains("commandPort=45457") && marker.Contains("dataPort=45458"), "loopback marker ports");
 
+        var plan = LoopbackRuntimePlan.From(loopbackDefaults);
+        Require(plan.StartExternalServer, "loopback plan starts real UDP server");
+        Require(plan.WriteInjectionProfile, "loopback plan writes injection profile");
+        Require(!plan.UseInjectedResponder, "loopback plan disables in-process protocol responder");
+
         var cfg = new BridgeConfig.VirtualDeviceConfig
         {
             Enabled = true,
