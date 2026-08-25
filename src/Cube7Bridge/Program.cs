@@ -6,6 +6,9 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        if (args.Any(a => string.Equals(a, "--self-test", StringComparison.OrdinalIgnoreCase)))
+            return await SelfTest.RunAsync();
+
         Console.Title = "Cube7 LaserOS Full Bridge";
         string mode = args.FirstOrDefault(a => a.StartsWith("--mode="))?.Split('=', 2)[1].ToLowerInvariant() ?? "full";
         string configPath = args.FirstOrDefault(a => a.StartsWith("--config="))?.Split('=', 2)[1] ?? "config.json";
