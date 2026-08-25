@@ -7,9 +7,14 @@
 int main() {
     VirtualLaserCubeNative state;
 
+    auto alive = state.Handle({0x27});
+    assert(alive.size() == 2);
+    assert(alive[0] == 0x27 && alive[1] == 0x00);
+
     auto info = state.Handle({0x77});
     assert(info.size() == 64);
     assert(info[0] == 0x77);
+    assert(info[1] == 0x00 && info[2] == 0x00);
     assert(info[21] == 0x70 && info[22] == 0x17); // 6000 LE
 
     auto enableBuffer = state.Handle({0x78, 0x01});
@@ -32,6 +37,6 @@ int main() {
     assert(sampleResponse.size() == 3 && sampleResponse[0] == 0xA9);
     assert(state.LastPointCount() == 1);
 
-    std::cout << "NATIVE SELFTEST PASS: physical-output=DISABLED\n";
+    std::cout << "NATIVE SELFTEST PASS: 0x27 discovery; physical-output=DISABLED\n";
     return 0;
 }
