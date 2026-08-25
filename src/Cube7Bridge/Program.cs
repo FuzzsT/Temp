@@ -4,6 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
+    private const string Version = "0.3.1";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -16,7 +17,7 @@ internal static class Program
         string configPath = args.FirstOrDefault(a => a.StartsWith("--config="))?.Split('=', 2)[1] ?? "config.json";
         var cfg = BridgeConfig.Load(configPath);
 
-        Console.WriteLine("Cube7 LaserOS Full Bridge 0.3.0");
+        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version}");
         Console.WriteLine("Virtual LaserCube discovery enabled; physical-output=DISABLED.");
         Console.WriteLine("No BLE characteristic payload writes and no interlock/E-stop bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
@@ -48,7 +49,7 @@ internal static class Program
                     tasks.Add(networkServer.RunAsync(cts.Token));
                 }
 
-                if (cfg.AutoInject) StartInjector(cfg.LaserOsProcessName);
+                if (cfg.AutoInject) StartInjector(cfg);
             }
             else
             {
@@ -83,7 +84,7 @@ internal static class Program
         try
         {
             if (enabled)
-                File.WriteAllText(markerPath, "FullBridge 0.3.0 virtual LaserCube; physical-output=DISABLED\n");
+                File.WriteAllText(markerPath, $"FullBridge {Version} virtual LaserCube; physical-output=DISABLED\n");
             else if (File.Exists(markerPath))
                 File.Delete(markerPath);
         }
@@ -94,20 +95,140 @@ internal static class Program
         }
     }
 
-    private static void StartInjector(string processName)
+    private static void StartInjector(BridgeConfig cfg)
     {
-        var exe = Path.Combine(AppContext.BaseDirectory, "Cube7Injector.exe");
+        var injector = Path.Combine(AppContext.BaseDirectory, "Cube7Injector.exe");
         var dll = Path.Combine(AppContext.BaseDirectory, "LaserOSHook.dll");
-        if (!File.Exists(exe) || !File.Exists(dll))
+        if (!File.Exists(injector) || !File.Exists(dll))
         {
             Console.WriteLine("[inject] FATAL: FullBridge package is incomplete: Cube7Injector.exe or LaserOSHook.dll is missing next to Cube7Bridge.exe.");
             return;
         }
+
+        if (cfg.EarlyHook.Enabled)
+        {
+            var running = FindLaserOsProcess(cfg.LaserOsProcessName);
+            string? launchPath = ResolveLaserOsPath(cfg, running);
+
+            if (running is not null && cfg.EarlyHook.RestartRunningLaserOs && !string.IsNullOrWhiteSpace(launchPath))
+            {
+                Console.WriteLine($"[early] LaserOS already running PID={running.Id}; restarting gracefully so discovery is hooked before startup.");
+                bool closed = GracefullyClose(running, cfg.EarlyHook.GracefulCloseTimeoutSeconds);
+                running.Dispose();
+                running = null;
+
+                if (closed)
+                {
+                    if (StartEarlyInjector(injector, dll, launchPath)) return;
+                    Console.WriteLine("[early] early-launch failed; falling back to process watcher.");
+                }
+                else
+                {
+                    Console.WriteLine("[early] LaserOS did not exit after graceful close request; no forced termination is performed. Falling back to late injection.");
+                }
+            }
+            else if (running is null && !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath))
+            {
+                Console.WriteLine($"[early] LaserOS is not running; launching with hook before startup: {launchPath}");
+                if (StartEarlyInjector(injector, dll, launchPath)) return;
+                Console.WriteLine("[early] early-launch failed; falling back to process watcher.");
+            }
+            else
+            {
+                running?.Dispose();
+            }
+        }
+
+        StartWatchInjector(injector, dll, cfg.LaserOsProcessName);
+    }
+
+    private static Process? FindLaserOsProcess(string processName)
+    {
+        try
+        {
+            string baseName = Path.GetFileNameWithoutExtension(processName);
+            return Process.GetProcessesByName(baseName).OrderBy(p => p.StartTime).FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[early] process lookup warning: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string? ResolveLaserOsPath(BridgeConfig cfg, Process? running)
+    {
+        if (!string.IsNullOrWhiteSpace(cfg.EarlyHook.LaserOsExePath))
+        {
+            try { return Path.GetFullPath(Environment.ExpandEnvironmentVariables(cfg.EarlyHook.LaserOsExePath)); }
+            catch (Exception ex) { Console.WriteLine($"[early] configured LaserOS path warning: {ex.Message}"); }
+        }
+
+        if (running is not null)
+        {
+            try
+            {
+                string? path = running.MainModule?.FileName;
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    Console.WriteLine($"[early] detected LaserOS path: {path}");
+                    return path;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[early] cannot read LaserOS executable path: {ex.Message}");
+            }
+        }
+        return null;
+    }
+
+    private static bool GracefullyClose(Process process, int timeoutSeconds)
+    {
+        try
+        {
+            if (process.HasExited) return true;
+            bool requested = process.CloseMainWindow();
+            if (!requested) return false;
+            int timeoutMs = Math.Clamp(timeoutSeconds, 1, 60) * 1000;
+            return process.WaitForExit(timeoutMs);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[early] graceful close warning: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static bool StartEarlyInjector(string injector, string dll, string launchPath)
+    {
         try
         {
             Process.Start(new ProcessStartInfo
             {
-                FileName = exe,
+                FileName = injector,
+                Arguments = $"--launch \"{launchPath}\" --dll \"{dll}\"",
+                UseShellExecute = false,
+                CreateNoWindow = false,
+                WorkingDirectory = AppContext.BaseDirectory
+            });
+            Console.WriteLine("[early] suspended-launch injector started; LaserOS will resume only after LaserOSHook.dll is loaded.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[early] start failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void StartWatchInjector(string injector, string dll, string processName)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = injector,
                 Arguments = $"--process \"{processName}\" --dll \"{dll}\"",
                 UseShellExecute = false,
                 CreateNoWindow = false,
