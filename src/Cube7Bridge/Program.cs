@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.4.2";
+    private const string Version = "0.5.0";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -26,13 +26,23 @@ internal static class Program
         status.Set("RENDERER_TAP", "WAITING", "no renderer frames observed");
         status.Set("CUBE7_BLE", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "target not scanned yet");
         status.Set("BLE_PROTOCOL", mode is "full" or "ble" ? "WAITING" : "SKIPPED", "candidate FFE1 trace not started");
+        status.Set("VIRTUAL_DEVICE", cfg.VirtualDevice.Enabled ? "ARMED" : "DISABLED", $"network={cfg.VirtualDevice.Network} usbHid={cfg.VirtualDevice.UsbHid}");
+        status.Set("USB_HID_TRACE", cfg.VirtualDevice.UsbHid.Equals("trace-first", StringComparison.OrdinalIgnoreCase) ? "ARMED" : "DISABLED", "passive trace-first model");
         status.Set("TRANSLATOR", "DRY-RUN", "normalized frames only; no device writes");
         status.Set("PHYSICAL_OUTPUT", "DISABLED", "hard safety invariant");
 
-        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} BLE-UART-PROTOCOL-TRACE");
-        Console.WriteLine("Renderer tap + verified LaserOS preflight + passive FFE1 candidate protocol trace.");
-        Console.WriteLine("Physical CUBE output is DISABLED; no BLE vendor payload writes and no interlock/E-stop bypass.");
+        Console.WriteLine($"Cube7 LaserOS Full Bridge {Version} VIRTUAL-DEVICE-EMU");
+        Console.WriteLine("Injected virtual LaserCube network responder + renderer preview + passive USB/HID trace model.");
+        Console.WriteLine("Physical CUBE output is DISABLED; no BLE vendor payload writes, no synthetic authentication and no interlock/E-stop bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
+
+        if (cfg.VirtualDevice.PhysicalOutput || cfg.AllowBleWrites || cfg.VirtualDevice.AllowSyntheticAuthentication)
+        {
+            Console.WriteLine("[safety] FATAL: unsafe virtual-device configuration rejected.");
+            status.Set("PHYSICAL_OUTPUT", "BLOCKED", "unsafe configuration requested");
+            PrintStatus(status);
+            return 4;
+        }
 
         LaserOsPreflightResult preflight = new(string.Empty, false, cfg.Preflight.ExpectedLaserOsSha256, null, false, "SKIPPED", "LaserOS preflight not required for this mode");
         if (mode is "full" or "trace")
@@ -72,16 +82,17 @@ internal static class Program
             {
                 writer = new CaptureWriter(cfg.CaptureDirectory);
                 Console.WriteLine($"capture={writer.DirectoryPath}");
-                captureServer = new HookCaptureServer(writer, status, rendererStats, cfg.Hardening.WriteDryRunTranslation);
+                captureServer = new HookCaptureServer(writer, status, rendererStats, cfg.Hardening.WriteDryRunTranslation, cfg.VirtualDevice);
                 tasks.Add(captureServer.RunAsync(cts.Token));
 
-                ConfigureVirtualMarker(markerPath, cfg.VirtualLaserCube.Enabled);
-                if (cfg.VirtualLaserCube.Enabled)
-                    Console.WriteLine("[virtual] optional injected responder armed for LaserCube UDP 45456/45457/45458");
+                bool armInjectedResponder = cfg.VirtualDevice.Enabled && cfg.VirtualDevice.Network && cfg.VirtualLaserCube.Enabled;
+                ConfigureVirtualMarker(markerPath, armInjectedResponder);
+                if (armInjectedResponder)
+                    Console.WriteLine("[virtual] injected responder armed for LaserCube UDP 45456/45457/45458; physical-output=OFF");
                 else
-                    Console.WriteLine("[renderer] virtual LaserCube disabled; renderer tap operates independently of Projector Setup device state.");
+                    Console.WriteLine("[renderer] injected virtual LaserCube disabled; renderer tap remains available independently.");
 
-                if (cfg.VirtualLaserCube.Enabled && cfg.VirtualLaserCube.NetworkServerEnabled)
+                if (armInjectedResponder && cfg.VirtualLaserCube.NetworkServerEnabled)
                 {
                     Console.WriteLine("[virtual] external UDP responder enabled (diagnostic mode)");
                     var networkServer = new VirtualLaserCubeServer(cfg.VirtualLaserCube, writer.DirectoryPath);
