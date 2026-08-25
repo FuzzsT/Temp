@@ -4,10 +4,25 @@
   "traceOnly": true,
   "allowBleWrites": false,
   "captureDirectory": "captures",
+  "virtualLaserCube": {
+    "enabled": true,
+    "networkServerEnabled": false,
+    "bindAddress": "0.0.0.0",
+    "alivePort": 45456,
+    "commandPort": 45457,
+    "dataPort": 45458,
+    "firmwareMajor": 1,
+    "firmwareMinor": 0,
+    "dacRate": 30000,
+    "maxDacRate": 30000,
+    "bufferSize": 6000,
+    "modelNumber": 7,
+    "modelName": "LaserCube Virtual CUBE7"
+  },
   "ble": {
     "nameContains": ["CUBE", "Laserworld"],
     "autoConnect": true,
     "subscribeNotifications": true,
-    "address": null
+    "address": "E4:66:E5:D2:6E:38"
   }
 }

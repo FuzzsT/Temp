@@ -2,7 +2,7 @@ name: build-windows
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, fullbridge-0.3.0 ]
 
 jobs:
   build-x64:
@@ -15,6 +15,9 @@ jobs:
       - name: Build FullBridge
         shell: powershell
         run: .\build.ps1 -Arch x64 -Publish
+      - name: Self-test Virtual LaserCube
+        shell: powershell
+        run: .\bin\Cube7Bridge.exe --self-test
       - name: Verify required native + managed binaries
         shell: powershell
         run: .\verify-release.ps1 -BinDir .\bin
