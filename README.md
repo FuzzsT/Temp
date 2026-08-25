@@ -1,25 +1,36 @@
-# Cube7 LaserOS Full Bridge 0.4.2 — BLE-UART-PROTOCOL-TRACE
+# Cube7 LaserOS Full Bridge 0.5.0 — VIRTUAL-DEVICE-EMU
 
-Windows x64 bridge do diagnostyki **LaserOS.exe** oraz **Laserworld CUBE 7**.
+Windows x64 bridge do testowania **LaserOS.exe** z wirtualnym urządzeniem LaserCube/CUBE 7 bez fizycznego wyjścia lasera.
 
-## Status 0.4.2
+## Co zmienia 0.5.0
 
-0.4.2 rozszerza 0.4.1 HARDENED-DRYRUN o pasywną warstwę analizy vendor BLE UART. Fizyczne wyjście lasera pozostaje wyłączone, `allowBleWrites=false`, a profil protokołu nie ma ścieżki transmisji do FFE2.
+0.5.0 rozwija warstwy 0.4.x w kierunku pełnego wirtualnego projektora testowego wewnątrz procesu LaserOS:
 
-Najważniejsze elementy:
+- early DLL injection przed discovery LaserOS;
+- wstrzyknięty responder LaserCube UDP (`0x27`, `0x77`, buffer/status/data); 
+- state machine wirtualnego urządzenia: `OFFLINE -> DISCOVERED -> IDENTIFIED -> AUTH-TRACE -> READY -> STREAMING`;
+- osobny `VirtualProtocolEngine` oparty na istniejącym modelu LaserCube;
+- authentication `0xB0/0xB1` pozostaje **trace-only** — brak syntetycznego `AUTH OK`;
+- model `VirtualHandleTable` przygotowany pod przyszłą emulację USB/HID;
+- klasyfikacja ścieżek `SetupAPI / HID / CreateFile / ReadFile / WriteFile / DeviceIoControl` po stronie diagnostycznej;
+- renderer tap i generowany `renderer-preview.svg`;
+- `virtual-device-state.json` ze stanem projektora i licznikami;
+- dry-run translator `RendererFrame -> 12-bit XYRGB`;
+- pasywna analiza BLE `FFE0/FFE1/FFE2` z 0.4.2;
+- support bundle bez surowych binarnych capture.
 
-- wszystko z 0.4.1: SHA-256 preflight, renderer tap, pipeline status, dry-run translator i support bundle;
-- potwierdzony target BLE `E4:66:E5:D2:6E:38` / `BLEAPP_C77D_V217`;
-- mapowanie GATT FFE0/FFE1/FFE2;
-- automatyczne połączenie i subskrypcja FFE1 notifications;
-- klasyfikacja 244-bajtowego bufora zer jako `idle-zero-buffer`;
-- parser kandydackiego formatu `[AA][CMD][LEN][PAYLOAD][SUM8]`;
-- walidacja sumy modulo 256 dla przechwyconych pakietów pasujących do tego formatu;
-- generator kandydackich pakietów wyłącznie do logu (`direction=dry-run-candidate`, `transmit=false`);
-- `ble-protocol-trace.ndjson` do dalszego porównania z ruchem oficjalnej aplikacji;
-- profil protokołu jest jawnie oznaczony `UNVERIFIED`.
+## Twarde invariants bezpieczeństwa
 
-Materiał źródłowy dla warstwy BLE zawiera sprzeczne mapy command ID oraz różne hipotezy checksum (SUM/XOR/CRC). Z tego powodu 0.4.2 **nie traktuje command IDs jako zweryfikowanych i nie wysyła vendor payloads do FFE2**.
+Domyślna konfiguracja 0.5.0 wymusza:
+
+```text
+physicalOutput=false
+allowBleWrites=false
+allowSyntheticAuthentication=false
+interlockBypass=false
+```
+
+FullBridge może emulować obecność urządzenia i przechwytywać ramki, ale nie wysyła vendor payloadów do fizycznego CUBE 7 i nie obchodzi E-stop/interlock.
 
 ## Zweryfikowany LaserOS
 
@@ -30,52 +41,107 @@ SHA-256:
 21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c
 ```
 
-Domyślna konfiguracja wymaga dokładnie tego SHA-256. Jeśli plik jest inny, FullBridge zatrzyma injection przed uruchomieniem hooka i pokaże `LASEROS_PREFLIGHT BLOCKED`.
+Jeżeli SHA-256 nie pasuje, injection jest blokowane przez preflight.
 
-## Status pipeline
+## Wirtualne urządzenie
 
-Co kilka sekund konsola drukuje m.in.:
+Domyślnie:
 
-```text
-LASEROS_PREFLIGHT    OK         LaserOS SHA-256 verified
-LASEROS_HOOK         OK         LaserOSHook.dll connected
-DISCOVERY_0x27       OK         27 00 accepted
-FULL_INFO_0x77       OK         64-byte response accepted
-AUTH_B0_B1           WAITING    no auth traffic observed
-RENDERER_TAP         OK         frames=120 rate=30000pps points=842 max=900
-CUBE7_BLE            OK         E4:66:E5:D2:6E:38 BLEAPP_C77D_V217
-BLE_PROTOCOL         TRACE      community-aa-sum-v1-candidate confidence=UNVERIFIED transmit=DISABLED
-TRANSLATOR           DRY-RUN    normalized=842 physical-output=OFF
-PHYSICAL_OUTPUT      DISABLED   hard safety invariant
+```json
+"virtualDevice": {
+  "enabled": true,
+  "network": true,
+  "usbHid": "trace-first",
+  "physicalOutput": false,
+  "allowSyntheticAuthentication": false,
+  "writeDeviceStateReport": true,
+  "writeRendererPreview": true
+}
 ```
 
-`AUTH_B0_B1=CAPTURED` oznacza, że odpowiedź B1 została przechwycona, ale nie jest to równoznaczne z zaakceptowaną autoryzacją. `AUTH_B0_B1=OK` pojawia się dopiero po zaobserwowaniu ruchu post-auth.
+oraz:
 
-## Renderer tap
-
-0.4.x przechwytuje ramki renderer przed warstwą sprzętową LaserCube. Pliki sesji:
-
-```text
-captures/<timestamp>/
-  capture.ndjson
-  handshake-summary.ndjson
-  renderer-frames.ndjson
-  renderer-frames.bin
-  translator-dryrun.ndjson
-  ble-*.ndjson
-  ble-protocol-trace.ndjson
+```json
+"virtualLaserCube": {
+  "enabled": true,
+  "networkServerEnabled": false,
+  "alivePort": 45456,
+  "commandPort": 45457,
+  "dataPort": 45458,
+  "modelName": "Cube7 Virtual Test Device"
+}
 ```
 
-`translator-dryrun.ndjson` zawiera znormalizowane punkty 12-bit:
+`networkServerEnabled=false` jest celowe. Główny responder działa **wewnątrz LaserOSHook.dll**, dzięki czemu nie konkuruje z portami UDP wiązanymi przez sam LaserOS.
+
+## Sekwencja discovery
 
 ```text
-X,Y = 0..4095
+LaserOS -> UDP 45456: 27
+Virtual ->             27 00
+
+LaserOS -> UDP 45457: 77
+Virtual ->             64-byte FULL_INFO
+```
+
+Po tym bridge śledzi dalsze komendy inicjalizacji. `B0/B1` są rejestrowane, ale nie są fałszowane.
+
+## State machine
+
+```text
+OFFLINE
+  -> DISCOVERED       0x27 accepted
+  -> IDENTIFIED       0x77 full-info accepted
+  -> AUTH-TRACE       B0/B1 observed
+  -> READY            post-auth device traffic observed
+  -> STREAMING        renderer frames observed
+```
+
+Stan jest zapisywany do:
+
+```text
+captures/<timestamp>/virtual-device-state.json
+```
+
+## Renderer preview
+
+Renderer tap działa niezależnie od fizycznego sprzętu. Przechwycone punkty są normalizowane do:
+
+```text
+X,Y   = 0..4095
 R,G,B = 0..4095
 ```
 
-Translator nie wysyła tych punktów do CUBE 7.
+i używane do diagnostycznego podglądu:
 
-## BLE target CUBE 7
+```text
+captures/<timestamp>/renderer-preview.svg
+```
+
+Nie jest to ścieżka fizycznej emisji.
+
+## USB/HID
+
+0.5.0 utrzymuje tryb:
+
+```text
+usbHid=trace-first
+```
+
+Warstwa modelowa rozpoznaje rodziny:
+
+```text
+SETUPAPI
+HID
+FILEIO
+DEVICEIO
+```
+
+Nie tworzy jeszcze syntetycznego urządzenia PnP Windows i nie fałszuje VID/PID w systemie. Emulacja sieciowa pozostaje główną, potwierdzoną ścieżką LaserOS. USB/HID jest rozwijane dopiero po potwierdzeniu, że konkretna wersja LaserOS wykonuje tę ścieżkę.
+
+## BLE CUBE 7
+
+Potwierdzony target z capture:
 
 ```text
 Address: E4:66:E5:D2:6E:38
@@ -83,57 +149,50 @@ Name:    BLEAPP_C77D_V217
 Service: 0000ffe0-0000-1000-8000-00805f9b34fb
 FFE1:    Read / WriteWithoutResponse / Write / Notify
 FFE2:    WriteWithoutResponse / Write
-Observed idle FFE1 read: 244 x 00
-Negotiated MTU observed by probe: 247
 ```
 
-Domyślne 0.4.2:
+BLE pozostaje pasywne: subskrypcja FFE1 jest dozwolona, ale vendor payload writes są wyłączone.
+
+## Status pipeline
+
+Przykład:
 
 ```text
-autoConnect=true
-subscribeNotifications=true
-allowBleWrites=false
-BLE protocol profile=community-aa-sum-v1-candidate
-confidence=UNVERIFIED
-transmit=false
+LASEROS_PREFLIGHT    OK
+LASEROS_HOOK         OK
+DISCOVERY_0x27       OK
+FULL_INFO_0x77       OK
+AUTH_B0_B1           ACTIVE
+VIRTUAL_DEVICE       AUTH-TRACE
+USB_HID_TRACE        ARMED
+RENDERER_TAP         OK
+CUBE7_BLE            OK
+BLE_PROTOCOL         TRACE
+TRANSLATOR           DRY-RUN
+PHYSICAL_OUTPUT      DISABLED
 ```
 
-CCCD notification subscription jest używana wyłącznie do odbioru FFE1. FullBridge nie wykonuje vendor payload writes do FFE1/FFE2.
-
-### Candidate protocol trace
-
-0.4.2 sprawdza, czy odebrane bytes pasują do kandydackiego formatu:
+Po zaobserwowaniu ramki:
 
 ```text
-AA CMD LEN PAYLOAD... CHECKSUM
-CHECKSUM candidate = sum(previous bytes) mod 256
+VIRTUAL_DEVICE       STREAMING  frames=... points=... physical-output=OFF
 ```
 
-Wyniki trafiają do:
+## Pliki capture
 
 ```text
-ble-protocol-trace.ndjson
+captures/<timestamp>/
+  capture.ndjson
+  handshake-summary.ndjson
+  renderer-frames.ndjson
+  renderer-frames.bin
+  renderer-preview.svg
+  translator-dryrun.ndjson
+  virtual-device-state.json
+  ble-*.ndjson
+  ble-protocol-trace.ndjson
+  support-bundle.zip
 ```
-
-Klasyfikacje:
-
-```text
-idle-zero-buffer
-AA-candidate-packet
-unknown
-```
-
-Plik zawiera także dwa **dry-run candidates** służące jako referencja do porównania z przyszłym capture oficjalnej aplikacji. Nie są one transmitowane.
-
-## Support bundle
-
-Po `Ctrl+C` FullBridge automatycznie tworzy:
-
-```text
-captures/<timestamp>/support-bundle.zip
-```
-
-W środku znajdują się m.in. status, preflight, renderer stats, config i bezpieczne `*.ndjson`, w tym `ble-protocol-trace.ndjson`. Surowe pliki binarne są celowo wykluczone z automatycznego bundle.
 
 ## Uruchomienie
 
@@ -143,7 +202,16 @@ Rozpakuj release do pustego katalogu i uruchom:
 start-full.cmd
 ```
 
-Tryby:
+W trybie `full` bridge:
+
+1. weryfikuje SHA LaserOS;
+2. uruchamia LaserOS przez suspended-launch injector;
+3. wstrzykuje `LaserOSHook.dll` przed discovery;
+4. uzbraja wirtualny responder sieciowy;
+5. przechwytuje handshake i renderer;
+6. równolegle wykonuje pasywny BLE scan/notify trace.
+
+Dostępne tryby:
 
 ```bat
 start-full.cmd
@@ -151,20 +219,29 @@ start-trace.cmd
 start-ble.cmd
 ```
 
-`start-ble.cmd` jest najszybszą opcją do zebrania nowego FFE1 trace bez uruchamiania LaserOS.
-
 ## Self-test
 
 ```bat
 bin\Cube7Bridge.exe --self-test
 ```
 
-Self-test obejmuje również kandydacki packet builder/parser, checksum mismatch detection, profil `UNVERIFIED`, brak transmisji i klasyfikację idle 244-byte FFE1 buffer.
+Self-test 0.5.0 obejmuje m.in.:
+
+- discovery `0x27 -> 27 00`;
+- 64-byte FULL_INFO;
+- state machine wirtualnego urządzenia;
+- brak syntetycznej autoryzacji;
+- virtual handle table;
+- klasyfikację API trace;
+- renderer SVG preview;
+- physical-output invariant;
+- renderer/dry-run translator;
+- BLE UART candidate parser z 0.4.2.
 
 ## Runtime
 
 ```text
-Cube7-LaserOS-FullBridge-0.4.2-BLE-UART-PROTOCOL-TRACE-win-x64/
+Cube7-LaserOS-FullBridge-0.5.0-VIRTUAL-DEVICE-EMU-win-x64/
 ├── start-full.cmd
 ├── start-trace.cmd
 ├── start-ble.cmd
@@ -181,12 +258,14 @@ Cube7-LaserOS-FullBridge-0.4.2-BLE-UART-PROTOCOL-TRACE-win-x64/
     └── config.json
 ```
 
-Weryfikacja release:
+Weryfikacja:
 
 ```powershell
 .\verify-release.ps1 -BinDir .\bin
 ```
 
-Prawidłowy wynik: `FULLBRIDGE_READY=1`.
+Prawidłowy wynik kończy się:
 
-Jeśli LaserOS działa z podwyższonym poziomem integralności, FullBridge powinien być uruchomiony z tym samym poziomem uprawnień, aby injection mogło się udać.
+```text
+FULLBRIDGE_READY=1
+```
