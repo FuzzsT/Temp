@@ -20,6 +20,15 @@
     "writeDryRunTranslation": true,
     "automaticSupportBundle": true
   },
+  "virtualDevice": {
+    "enabled": true,
+    "network": true,
+    "usbHid": "trace-first",
+    "physicalOutput": false,
+    "allowSyntheticAuthentication": false,
+    "writeDeviceStateReport": true,
+    "writeRendererPreview": true
+  },
   "virtualLaserCube": {
     "enabled": false,
     "networkServerEnabled": false,
