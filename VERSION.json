@@ -1,7 +1,7 @@
 {
   "name": "Cube7-LaserOS-FullBridge",
-  "version": "0.2.0",
-  "release": "FULLBRIDGE-RUNTIME-FIX",
+  "version": "0.3.1",
+  "release": "EARLYHOOK-ORDINAL-FIX",
   "architecture": "win-x64",
   "required_runtime_files": [
     "bin/Cube7Bridge.exe",
