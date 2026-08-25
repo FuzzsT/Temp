@@ -44,6 +44,26 @@ public static class BleOfficialSessionTests
         var validate = codec.GetMethod("ValidateSession", BindingFlags.Public | BindingFlags.Static);
         Require(validate is not null, "official BLE session validation missing");
         validate!.Invoke(null, [session]);
+
+        var derive = codec.GetMethod("DeriveSessionCrypto", BindingFlags.Public | BindingFlags.Static);
+        Require(derive is not null, "session crypto derivation missing");
+        object crypto = derive!.Invoke(null, [session])!;
+        var cryptoType = crypto.GetType();
+        Require(Convert.ToHexString((byte[])cryptoType.GetProperty("Key")!.GetValue(crypto)!) == "5345435245544B455931323334353637", "derived AES key mismatch");
+        Require(Convert.ToHexString((byte[])cryptoType.GetProperty("Iv")!.GetValue(crypto)!) == "4445564943454B455931323334353637", "derived AES IV mismatch");
+
+        var policyType = Type.GetType("Cube7Bridge.BleOfficialSessionPolicy");
+        Require(policyType is not null, "official BLE runtime policy missing");
+        object policy = policyType!.GetProperty("Default", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+        Require((string)policyType.GetProperty("PairingMode")!.GetValue(policy)! == "unpaired", "Windows pairing must stay disabled");
+        Require(!(bool)policyType.GetProperty("UseCachedServices")!.GetValue(policy)!, "GATT services must be uncached");
+        Require((int)policyType.GetProperty("ConnectSettleMilliseconds")!.GetValue(policy)! == 1500, "connect settle must match 321.zip");
+        Require((int)policyType.GetProperty("NotifySettleMilliseconds")!.GetValue(policy)! == 200, "notify settle must match 321.zip");
+        Require((int)policyType.GetProperty("HandshakeTimeoutMilliseconds")!.GetValue(policy)! == 6000, "0x8B timeout must match 321.zip");
+        Require((int)policyType.GetProperty("MaxConnectAttempts")!.GetValue(policy)! == 3, "connect attempts must match 321.zip");
+        Require((string)policyType.GetProperty("ExpectedDeviceName")!.GetValue(policy)! == "BLEAPP_C77D_V217", "device identity gate");
+        Require((string)policyType.GetProperty("CommandCharacteristic")!.GetValue(policy)! == "0000ffe1-0000-1000-8000-00805f9b34fb", "FFE1 command channel");
+        Require((string)policyType.GetProperty("NotifyCharacteristic")!.GetValue(policy)! == "0000ffe1-0000-1000-8000-00805f9b34fb", "FFE1 notify channel");
     }
 
     private static void Require(bool condition, string name)
