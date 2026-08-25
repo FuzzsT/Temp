@@ -16,10 +16,26 @@ $exeOut = Join-Path $out 'Cube7Injector.exe'
 $virtualMarker = Join-Path $out 'VirtualLaserCube.enabled'
 $selfTestOut = Join-Path $env:TEMP ("Cube7NativeSelfTest-{0}.exe" -f [guid]::NewGuid().ToString('N'))
 $loopbackSelfTestOut = Join-Path $env:TEMP ("Cube7LoopbackSelfTest-{0}.exe" -f [guid]::NewGuid().ToString('N'))
+$loopbackProbeOut = Join-Path $env:TEMP ("LaserOSLoopbackHookProbe-{0}.exe" -f [guid]::NewGuid().ToString('N'))
+$loopbackProbePass = Join-Path $env:TEMP ("LaserOSLoopbackHookProbe-{0}.pass" -f [guid]::NewGuid().ToString('N'))
+$loopbackProfile = Join-Path $env:TEMP ("Cube7LoopbackProfile-{0}.txt" -f [guid]::NewGuid().ToString('N'))
 $probeOut = Join-Path $env:TEMP ("LaserOSEarlyHookProbe-{0}.exe" -f [guid]::NewGuid().ToString('N'))
 $probePass = Join-Path $env:TEMP ("LaserOSEarlyHookProbe-{0}.pass" -f [guid]::NewGuid().ToString('N'))
-Remove-Item $dllOut,$exeOut,$virtualMarker,$selfTestOut,$loopbackSelfTestOut,$probeOut,$probePass -Force -ErrorAction SilentlyContinue
+Remove-Item $dllOut,$exeOut,$virtualMarker,$selfTestOut,$loopbackSelfTestOut,$loopbackProbeOut,$loopbackProbePass,$loopbackProfile,$probeOut,$probePass -Force -ErrorAction SilentlyContinue
 $env:CUBE7_EARLYHOOK_PASSFILE = $probePass
+$env:CUBE7_LOOPBACK_PASSFILE = $loopbackProbePass
+@"
+mode=loopback
+enabled=1
+address=127.0.0.1
+alivePort=45456
+commandPort=45457
+dataPort=45458
+rewriteDestinations=1
+rewriteClientBinds=1
+physicalOutput=0
+syntheticAuthentication=0
+"@ | Set-Content -Path $loopbackProfile -Encoding ASCII
 
 $tmpCmd = Join-Path $env:TEMP ("cube7-native-{0}.cmd" -f [guid]::NewGuid().ToString('N'))
 @"
@@ -39,6 +55,15 @@ cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /LD /Fe:"$dllOut" LaserOSHook.cpp Ws2
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$exeOut" Injector.cpp
 if errorlevel 1 exit /b %errorlevel%
+cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$loopbackProbeOut" LaserOSLoopbackHookProbe.cpp Ws2_32.lib
+if errorlevel 1 exit /b %errorlevel%
+copy /y "$loopbackProfile" "$virtualMarker" >nul
+"$exeOut" --launch "$loopbackProbeOut" --dll "$dllOut" --once
+if errorlevel 1 exit /b %errorlevel%
+if not exist "$loopbackProbePass" (
+  echo LOOPBACK_HOOK_PROBE FAIL: injected routing did not deliver broadcast command to localhost server
+  exit /b 42
+)
 cl /nologo /DNOMINMAX /std:c++17 /EHsc /O2 /Fe:"$probeOut" LaserOSEarlyHookProbe.cpp Ws2_32.lib
 if errorlevel 1 exit /b %errorlevel%
 echo ==== EARLYHOOK PROBE IMPORTS ====
@@ -60,8 +85,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Native build failed: $LASTEXITCODE" }
 }
 finally {
-    Remove-Item $tmpCmd,$selfTestOut,$loopbackSelfTestOut,$probeOut,$probePass,$virtualMarker -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmpCmd,$selfTestOut,$loopbackSelfTestOut,$loopbackProbeOut,$loopbackProbePass,$loopbackProfile,$probeOut,$probePass,$virtualMarker -Force -ErrorAction SilentlyContinue
     Remove-Item Env:CUBE7_EARLYHOOK_PASSFILE -ErrorAction SilentlyContinue
+    Remove-Item Env:CUBE7_LOOPBACK_PASSFILE -ErrorAction SilentlyContinue
 }
 
 $missing = @()
