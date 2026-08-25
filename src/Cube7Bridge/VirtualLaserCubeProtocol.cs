@@ -37,7 +37,7 @@ public sealed record VirtualLaserCubeReply(byte[]? Response, string Kind, int Po
 
 public static class VirtualLaserCubeProtocol
 {
-    private static readonly byte[] Serial = [0x43, 0x37, 0x56, 0x30, 0x30, 0x32]; // C7V002
+    private static readonly byte[] Serial = [0x43, 0x37, 0x56, 0x30, 0x30, 0x33]; // C7V003
 
     public static byte[] BuildFullInfo(VirtualLaserCubeConfig cfg, VirtualLaserCubeState state)
     {
