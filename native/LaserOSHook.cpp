@@ -177,8 +177,10 @@ static bool InjectResponseToSocket(SOCKET target, const std::vector<uint8_t>& re
 }
 
 static bool IsVirtualOpcodePort(uint8_t opcode, uint16_t port) {
+    // Real libLaserdockCore discovery is 0x27 on the dedicated alive port.
+    if (opcode == 0x27) return port == 45456;
+    if (opcode == 0x77) return port == 45457;
     if (opcode == 0xA9) return port == 45458;
-    if (opcode == 0x77) return port == 45456 || port == 45457;
     return (opcode == 0x78 || opcode == 0x80 || opcode == 0x8A) && port == 45457;
 }
 
