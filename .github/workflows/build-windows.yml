@@ -2,7 +2,7 @@ name: build-windows
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, fullbridge-0.3.0, fullbridge-0.3.2, fullbridge-0.3.3-auth-trace, fullbridge-0.4.0-renderer-tap, fullbridge-0.4.1-hardened-dryrun ]
+    branches: [ main, master, fullbridge-0.3.0, fullbridge-0.3.2, fullbridge-0.3.3-auth-trace, fullbridge-0.4.0-renderer-tap, fullbridge-0.4.1-hardened-dryrun, fullbridge-0.4.2-ble-uart-trace ]
 
 jobs:
   build-x64:
