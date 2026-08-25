@@ -8,6 +8,12 @@ public static class VirtualDeviceEmulationTests
         Require(loopbackDefaults.NetworkServerEnabled, "real localhost UDP server must be enabled by default");
         Require(loopbackDefaults.BindAddress == "127.0.0.1", "real UDP server must bind loopback only");
 
+        var profile = LoopbackInjectionProfile.From(loopbackDefaults);
+        string marker = profile.Serialize();
+        Require(profile.Enabled && profile.RewriteDestinations && profile.RewriteClientBinds, "loopback injection rewrite policy");
+        Require(marker.Contains("mode=loopback") && marker.Contains("address=127.0.0.1"), "loopback marker mode/address");
+        Require(marker.Contains("alivePort=45456") && marker.Contains("commandPort=45457") && marker.Contains("dataPort=45458"), "loopback marker ports");
+
         var cfg = new BridgeConfig.VirtualDeviceConfig
         {
             Enabled = true,
