@@ -31,6 +31,7 @@ if (!(Test-Path (Join-Path $ccOut 'Cube7ControlCenter.exe'))) { throw 'Cube7Cont
 
 Write-Host '[4/5] Copying runtime configuration...'
 Copy-Item (Join-Path $root 'config.json') (Join-Path $out 'config.json') -Force
+Copy-Item (Join-Path $root 'config.diagnostic.json') (Join-Path $out 'config.diagnostic.json') -Force
 
 Write-Host '[5/5] Verifying FullBridge runtime layout...'
 & (Join-Path $root 'verify-release.ps1') -BinDir $out
