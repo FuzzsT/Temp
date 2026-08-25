@@ -9,23 +9,27 @@ public sealed class HookCaptureServer : IDisposable
     private readonly RendererFrameCapture _renderer;
     private readonly PipelineStatus _status;
     private readonly RendererFrameStatistics _stats;
-    private readonly DryRunTranslationCapture? _translation;
+    private readonly RendererTapHealthWriter _healthWriter;
+    private readonly bool _writeDryRunTranslation;
+    private DryRunTranslationCapture? _translation;
     private long _rendererFrames;
+    private DateTime? _hookConnectedUtc;
 
     public HookCaptureServer(CaptureWriter writer, PipelineStatus status, RendererFrameStatistics stats, bool writeDryRunTranslation)
     {
         _writer = writer;
         _status = status;
         _stats = stats;
+        _writeDryRunTranslation = writeDryRunTranslation;
         _handshake = new LaserCubeHandshakeTracker(writer.DirectoryPath);
         _renderer = new RendererFrameCapture(writer.DirectoryPath);
-        if (writeDryRunTranslation)
-            _translation = new DryRunTranslationCapture(writer.DirectoryPath);
+        _healthWriter = new RendererTapHealthWriter(writer.DirectoryPath);
     }
 
     public async Task RunAsync(CancellationToken ct)
     {
         _status.Set("LASEROS_HOOK", "WAITING", "waiting for injected hook pipe");
+        _status.Set("RENDERER_TAP", "WAITING", "no renderer frames observed");
         while (!ct.IsCancellationRequested)
         {
             await using var pipe = new NamedPipeServerStream(
@@ -33,13 +37,16 @@ public sealed class HookCaptureServer : IDisposable
                 PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 1024 * 1024, 1024 * 1024);
             Console.WriteLine("[hook] waiting for LaserOSHook.dll...");
             await pipe.WaitForConnectionAsync(ct);
+            _hookConnectedUtc = DateTime.UtcNow;
             Console.WriteLine("[hook] connected");
             _status.Set("LASEROS_HOOK", "OK", "LaserOSHook.dll connected");
             Console.WriteLine($"[stage] handshake summary: {Path.Combine(_writer.DirectoryPath, "handshake-summary.ndjson")}");
-            Console.WriteLine($"[renderer] frame summary: {_renderer.SummaryPath}");
-            if (_translation is not null)
-                Console.WriteLine($"[translator] dry-run summary: {_translation.Path}");
+            Console.WriteLine($"[renderer] frame summary (created on first frame): {_renderer.SummaryPath}");
+            Console.WriteLine($"[renderer] hook health: {_healthWriter.Path}");
             Console.WriteLine("[renderer] tap is capture-only; physical output remains OFF.");
+
+            using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var watchdog = WatchRendererAsync(connectionCts.Token);
             try
             {
                 var header = new byte[HookRecord.HeaderSize];
@@ -58,10 +65,14 @@ public sealed class HookCaptureServer : IDisposable
                         _renderer.Write(record, frame);
                         _stats.Observe(frame);
                         var normalized = DryRunTranslator.Translate(frame);
-                        _translation?.Write(normalized);
+                        if (_writeDryRunTranslation)
+                        {
+                            _translation ??= new DryRunTranslationCapture(_writer.DirectoryPath);
+                            _translation.Write(normalized);
+                        }
                         long n = Interlocked.Increment(ref _rendererFrames);
                         var snap = _stats.Snapshot();
-                        _status.Set("RENDERER_TAP", "OK", $"frames={snap.Frames} rate={frame.Rate}pps points={frame.PointCount} max={snap.MaxPoints}");
+                        _status.Set("RENDERER_TAP", "ACTIVE", $"frames={snap.Frames} rate={frame.Rate}pps points={frame.PointCount} max={snap.MaxPoints}");
                         _status.Set("TRANSLATOR", "DRY-RUN", $"normalized={normalized.PointCount} physical-output=OFF");
                         if (n <= 5 || n % 60 == 0)
                             Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X} normalized={normalized.PointCount}");
@@ -86,6 +97,36 @@ public sealed class HookCaptureServer : IDisposable
                 _status.Set("LASEROS_HOOK", "ERROR", ex.Message);
                 Console.WriteLine($"[hook] disconnected: {ex.Message}");
             }
+            finally
+            {
+                connectionCts.Cancel();
+                try { await watchdog; } catch (OperationCanceledException) { }
+                _hookConnectedUtc = null;
+            }
+        }
+    }
+
+    private async Task WatchRendererAsync(CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromSeconds(10);
+        while (!ct.IsCancellationRequested)
+        {
+            var health = RendererTapHealthEvaluator.Evaluate(
+                hookConnected: _hookConnectedUtc is not null,
+                hookConnectedUtc: _hookConnectedUtc,
+                stats: _stats.Snapshot(),
+                nowUtc: DateTime.UtcNow,
+                noFrameTimeout: timeout);
+            _healthWriter.Write(health);
+
+            if (health.State is "ERROR" or "STALLED")
+                _status.Set("RENDERER_TAP", health.State, health.Detail);
+            else if (health.State == "ACTIVE")
+                _status.Set("RENDERER_TAP", "ACTIVE", health.Detail);
+            else if (_stats.Snapshot().Frames == 0)
+                _status.Set("RENDERER_TAP", "WAITING", health.Detail);
+
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
     }
 
