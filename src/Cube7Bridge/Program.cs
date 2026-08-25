@@ -4,7 +4,7 @@ namespace Cube7Bridge;
 
 internal static class Program
 {
-    private const string Version = "0.3.2";
+    private const string Version = "0.3.3";
     private const string VirtualMarker = "VirtualLaserCube.enabled";
 
     private static async Task<int> Main(string[] args)
@@ -19,6 +19,7 @@ internal static class Program
 
         Console.WriteLine($"Cube7 LaserOS Full Bridge {Version}");
         Console.WriteLine("Virtual LaserCube discovery enabled; physical-output=DISABLED.");
+        Console.WriteLine("Passive B0/B1 authentication trace enabled; no synthetic AUTH OK response is generated.");
         Console.WriteLine("No BLE characteristic payload writes and no interlock/E-stop bypass.");
         Console.WriteLine($"mode={mode} process={cfg.LaserOsProcessName}");
 
