@@ -1,27 +1,22 @@
-# Cube7 LaserOS Full Bridge 0.5.0 — VIRTUAL-DEVICE-EMU
+# Cube7 LaserOS Full Bridge 0.6.0 — LOOPBACK-AUTOCONFIG
 
 Windows x64 bridge do testowania **LaserOS.exe** z wirtualnym urządzeniem LaserCube/CUBE 7 bez fizycznego wyjścia lasera.
 
-## Co zmienia 0.5.0
+## Co zmienia 0.6.0
 
-0.5.0 rozwija warstwy 0.4.x w kierunku pełnego wirtualnego projektora testowego wewnątrz procesu LaserOS:
+0.6.0 zastępuje główny in-process responder z 0.5.0 realnym serwerem UDP na localhost i używa wstrzykniętego hooka wyłącznie do automatycznej konfiguracji Winsock po stronie LaserOS:
 
-- early DLL injection przed discovery LaserOS;
-- wstrzyknięty responder LaserCube UDP (`0x27`, `0x77`, buffer/status/data); 
-- state machine wirtualnego urządzenia: `OFFLINE -> DISCOVERED -> IDENTIFIED -> AUTH-TRACE -> READY -> STREAMING`;
-- osobny `VirtualProtocolEngine` oparty na istniejącym modelu LaserCube;
-- authentication `0xB0/0xB1` pozostaje **trace-only** — brak syntetycznego `AUTH OK`;
-- model `VirtualHandleTable` przygotowany pod przyszłą emulację USB/HID;
-- klasyfikacja ścieżek `SetupAPI / HID / CreateFile / ReadFile / WriteFile / DeviceIoControl` po stronie diagnostycznej;
-- renderer tap i generowany `renderer-preview.svg`;
-- `virtual-device-state.json` ze stanem projektora i licznikami;
-- dry-run translator `RendererFrame -> 12-bit XYRGB`;
-- pasywna analiza BLE `FFE0/FFE1/FFE2` z 0.4.2;
-- support bundle bez surowych binarnych capture.
+- realny `Cube7Bridge.exe` nasłuchuje na `127.0.0.1:45456/45457/45458`;
+- `LaserOSHook.dll` przepisuje destination LaserCube na loopback;
+- lokalne bindy klienta LaserOS do `45456/45457/45458` są remapowane na porty ephemeral, aby nie kolidowały z serwerem;
+- serwer startuje i binduje wszystkie trzy porty **przed** zapisaniem profilu hooka i **przed** wznowieniem LaserOS z suspended-launch;
+- in-process protocol responder w DLL jest w trybie loopback wyłączony;
+- early DLL injection, renderer tap, capture, BLE trace i support bundle pozostają;
+- authentication `0xB0/0xB1` pozostaje **trace-only** — brak syntetycznego `AUTH OK`.
 
 ## Twarde invariants bezpieczeństwa
 
-Domyślna konfiguracja 0.5.0 wymusza:
+Domyślna konfiguracja 0.6.0 wymusza:
 
 ```text
 physicalOutput=false
@@ -30,7 +25,7 @@ allowSyntheticAuthentication=false
 interlockBypass=false
 ```
 
-FullBridge może emulować obecność urządzenia i przechwytywać ramki, ale nie wysyła vendor payloadów do fizycznego CUBE 7 i nie obchodzi E-stop/interlock.
+FullBridge emuluje wyłącznie warstwę programową urządzenia. Nie wysyła vendor payloadów do fizycznego CUBE 7 i nie obchodzi E-stop/interlock.
 
 ## Zweryfikowany LaserOS
 
@@ -43,67 +38,78 @@ SHA-256:
 
 Jeżeli SHA-256 nie pasuje, injection jest blokowane przez preflight.
 
-## Wirtualne urządzenie
-
-Domyślnie:
-
-```json
-"virtualDevice": {
-  "enabled": true,
-  "network": true,
-  "usbHid": "trace-first",
-  "physicalOutput": false,
-  "allowSyntheticAuthentication": false,
-  "writeDeviceStateReport": true,
-  "writeRendererPreview": true
-}
-```
-
-oraz:
+## Domyślna konfiguracja sieciowa
 
 ```json
 "virtualLaserCube": {
   "enabled": true,
-  "networkServerEnabled": false,
+  "networkServerEnabled": true,
+  "bindAddress": "127.0.0.1",
   "alivePort": 45456,
   "commandPort": 45457,
   "dataPort": 45458,
+  "firmwareMajor": 1,
+  "firmwareMinor": 0,
+  "dacRate": 30000,
+  "maxDacRate": 30000,
+  "bufferSize": 6000,
+  "modelNumber": 7,
   "modelName": "Cube7 Virtual Test Device"
 }
 ```
 
-`networkServerEnabled=false` jest celowe. Główny responder działa **wewnątrz LaserOSHook.dll**, dzięki czemu nie konkuruje z portami UDP wiązanymi przez sam LaserOS.
+Profil przekazywany do DLL ma postać:
+
+```text
+mode=loopback
+enabled=1
+address=127.0.0.1
+alivePort=45456
+commandPort=45457
+dataPort=45458
+rewriteDestinations=1
+rewriteClientBinds=1
+physicalOutput=0
+syntheticAuthentication=0
+```
+
+## Przepływ runtime
+
+```text
+Cube7Bridge.exe
+  1. preflight SHA LaserOS
+  2. bind real UDP server 127.0.0.1:45456/45457/45458
+  3. write loopback injection profile
+  4. CREATE_SUSPENDED LaserOS.exe
+  5. inject LaserOSHook.dll
+  6. hook settle barrier
+  7. ResumeThread LaserOS.exe
+
+LaserOS destination :45456/:45457/:45458
+             |
+             | Winsock destination rewrite
+             v
+127.0.0.1:45456/:45457/:45458
+             |
+             v
+      Cube7Bridge.exe
+```
+
+Jeżeli LaserOS próbuje lokalnie zrobić `bind()` na canonical portach LaserCube, hook zmienia lokalny port na `0`, dzięki czemu Windows przydziela realny port ephemeral. Pozwala to serwerowi i klientowi działać na tym samym komputerze bez kolizji portów.
 
 ## Sekwencja discovery
 
 ```text
 LaserOS -> UDP 45456: 27
-Virtual ->             27 00
+Server  ->             27 00
 
 LaserOS -> UDP 45457: 77
-Virtual ->             64-byte FULL_INFO
+Server  ->             64-byte FULL_INFO
 ```
 
-Po tym bridge śledzi dalsze komendy inicjalizacji. `B0/B1` są rejestrowane, ale nie są fałszowane.
+Dalsze komendy `0x78`, `0x80`, `0x8A` i `0xA9` obsługuje realny `VirtualLaserCubeServer`. `0x80` zmienia tylko stan wirtualny; `physicalOutputEnabled` pozostaje zawsze `false`.
 
-## State machine
-
-```text
-OFFLINE
-  -> DISCOVERED       0x27 accepted
-  -> IDENTIFIED       0x77 full-info accepted
-  -> AUTH-TRACE       B0/B1 observed
-  -> READY            post-auth device traffic observed
-  -> STREAMING        renderer frames observed
-```
-
-Stan jest zapisywany do:
-
-```text
-captures/<timestamp>/virtual-device-state.json
-```
-
-## Renderer preview
+## Renderer i diagnostyka
 
 Renderer tap działa niezależnie od fizycznego sprzętu. Przechwycone punkty są normalizowane do:
 
@@ -112,36 +118,32 @@ X,Y   = 0..4095
 R,G,B = 0..4095
 ```
 
-i używane do diagnostycznego podglądu:
+Podgląd diagnostyczny:
 
 ```text
 captures/<timestamp>/renderer-preview.svg
 ```
 
-Nie jest to ścieżka fizycznej emisji.
-
-## USB/HID
-
-0.5.0 utrzymuje tryb:
+Stan i capture:
 
 ```text
-usbHid=trace-first
+captures/<timestamp>/
+  capture.ndjson
+  handshake-summary.ndjson
+  renderer-frames.ndjson
+  renderer-frames.bin
+  renderer-preview.svg
+  translator-dryrun.ndjson
+  virtual-device-state.json
+  virtual-lasercube-*.ndjson
+  ble-*.ndjson
+  ble-protocol-trace.ndjson
+  support-bundle.zip
 ```
-
-Warstwa modelowa rozpoznaje rodziny:
-
-```text
-SETUPAPI
-HID
-FILEIO
-DEVICEIO
-```
-
-Nie tworzy jeszcze syntetycznego urządzenia PnP Windows i nie fałszuje VID/PID w systemie. Emulacja sieciowa pozostaje główną, potwierdzoną ścieżką LaserOS. USB/HID jest rozwijane dopiero po potwierdzeniu, że konkretna wersja LaserOS wykonuje tę ścieżkę.
 
 ## BLE CUBE 7
 
-Potwierdzony target z capture:
+Potwierdzony target:
 
 ```text
 Address: E4:66:E5:D2:6E:38
@@ -153,47 +155,6 @@ FFE2:    WriteWithoutResponse / Write
 
 BLE pozostaje pasywne: subskrypcja FFE1 jest dozwolona, ale vendor payload writes są wyłączone.
 
-## Status pipeline
-
-Przykład:
-
-```text
-LASEROS_PREFLIGHT    OK
-LASEROS_HOOK         OK
-DISCOVERY_0x27       OK
-FULL_INFO_0x77       OK
-AUTH_B0_B1           ACTIVE
-VIRTUAL_DEVICE       AUTH-TRACE
-USB_HID_TRACE        ARMED
-RENDERER_TAP         OK
-CUBE7_BLE            OK
-BLE_PROTOCOL         TRACE
-TRANSLATOR           DRY-RUN
-PHYSICAL_OUTPUT      DISABLED
-```
-
-Po zaobserwowaniu ramki:
-
-```text
-VIRTUAL_DEVICE       STREAMING  frames=... points=... physical-output=OFF
-```
-
-## Pliki capture
-
-```text
-captures/<timestamp>/
-  capture.ndjson
-  handshake-summary.ndjson
-  renderer-frames.ndjson
-  renderer-frames.bin
-  renderer-preview.svg
-  translator-dryrun.ndjson
-  virtual-device-state.json
-  ble-*.ndjson
-  ble-protocol-trace.ndjson
-  support-bundle.zip
-```
-
 ## Uruchomienie
 
 Rozpakuj release do pustego katalogu i uruchom:
@@ -202,14 +163,14 @@ Rozpakuj release do pustego katalogu i uruchom:
 start-full.cmd
 ```
 
-W trybie `full` bridge:
+Oczekiwane kluczowe wpisy startowe:
 
-1. weryfikuje SHA LaserOS;
-2. uruchamia LaserOS przez suspended-launch injector;
-3. wstrzykuje `LaserOSHook.dll` przed discovery;
-4. uzbraja wirtualny responder sieciowy;
-5. przechwytuje handshake i renderer;
-6. równolegle wykonuje pasywny BLE scan/notify trace.
+```text
+Cube7 LaserOS Full Bridge 0.6.0 LOOPBACK-AUTOCONFIG
+[loopback] real UDP server ready at 127.0.0.1 ports=45456/45457/45458
+[loopback] injection profile armed: destination rewrite + client bind collision avoidance; in-process protocol responder=OFF
+[early] suspended-launch injector started; LaserOS will resume only after LaserOSHook.dll is loaded.
+```
 
 Dostępne tryby:
 
@@ -219,53 +180,16 @@ start-trace.cmd
 start-ble.cmd
 ```
 
-## Self-test
+## CI / self-test
 
-```bat
-bin\Cube7Bridge.exe --self-test
-```
+Windows CI sprawdza między innymi:
 
-Self-test 0.5.0 obejmuje m.in.:
-
-- discovery `0x27 -> 27 00`;
-- 64-byte FULL_INFO;
-- state machine wirtualnego urządzenia;
-- brak syntetycznej autoryzacji;
-- virtual handle table;
-- klasyfikację API trace;
-- renderer SVG preview;
-- physical-output invariant;
-- renderer/dry-run translator;
-- BLE UART candidate parser z 0.4.2.
-
-## Runtime
-
-```text
-Cube7-LaserOS-FullBridge-0.5.0-VIRTUAL-DEVICE-EMU-win-x64/
-├── start-full.cmd
-├── start-trace.cmd
-├── start-ble.cmd
-├── README.md
-├── VERSION.json
-├── verify-release.ps1
-├── docs/
-├── protocols/
-├── scripts/
-└── bin/
-    ├── Cube7Bridge.exe
-    ├── Cube7Injector.exe
-    ├── LaserOSHook.dll
-    └── config.json
-```
-
-Weryfikacja:
-
-```powershell
-.\verify-release.ps1 -BinDir .\bin
-```
-
-Prawidłowy wynik kończy się:
-
-```text
-FULLBRIDGE_READY=1
-```
+- model protokołu `0x27/0x77/0x78/0x80/0x8A/0xA9`;
+- realny localhost UDP round-trip;
+- parser profilu loopback;
+- destination rewrite do `127.0.0.1`;
+- remap canonical client bind do realnego portu ephemeral;
+- injected-loopback probe uruchamiany przez `Cube7Injector.exe`;
+- wymagane pliki runtime;
+- bezpieczne wartości konfiguracji;
+- zawartość finalnego ZIP-a.
