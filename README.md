@@ -1,22 +1,26 @@
-# Cube7 LaserOS Full Bridge 0.6.0 — LOOPBACK-AUTOCONFIG
+# Cube7 LaserOS Full Bridge 0.6.1 — BLE-SESSION-BRIDGE
 
-Windows x64 bridge do testowania **LaserOS.exe** z wirtualnym urządzeniem LaserCube/CUBE 7 bez fizycznego wyjścia lasera.
+Windows x64 bridge do testowania **LaserOS.exe** z realnym serwerem LaserCube UDP na localhost, early DLL injection oraz potwierdzoną z `321.zip` sesją BLE CUBE 7. Fizyczna emisja lasera pozostaje wyłączona.
 
-## Co zmienia 0.6.0
+## Co zmienia 0.6.1
 
-0.6.0 zastępuje główny in-process responder z 0.5.0 realnym serwerem UDP na localhost i używa wstrzykniętego hooka wyłącznie do automatycznej konfiguracji Winsock po stronie LaserOS:
+0.6.1 zachowuje architekturę 0.6.0 `LOOPBACK-AUTOCONFIG`, ale zastępuje pasywny BLE inventory właściwym, źródłowo potwierdzonym transportem/session handshake CUBE:
 
 - realny `Cube7Bridge.exe` nasłuchuje na `127.0.0.1:45456/45457/45458`;
-- `LaserOSHook.dll` przepisuje destination LaserCube na loopback;
-- lokalne bindy klienta LaserOS do `45456/45457/45458` są remapowane na porty ephemeral, aby nie kolidowały z serwerem;
-- serwer startuje i binduje wszystkie trzy porty **przed** zapisaniem profilu hooka i **przed** wznowieniem LaserOS z suspended-launch;
-- in-process protocol responder w DLL jest w trybie loopback wyłączony;
-- early DLL injection, renderer tap, capture, BLE trace i support bundle pozostają;
-- authentication `0xB0/0xB1` pozostaje **trace-only** — brak syntetycznego `AUTH OK`.
+- `LaserOSHook.dll` przepisuje destination LaserCube na loopback i remapuje kolizyjne bindy klienta na port ephemeral;
+- LaserOS jest uruchamiany przez early suspended-launch injection;
+- BLE nie wykonuje Windows Pair i nie wywołuje API pair/unpair;
+- po połączeniu używane są wyłącznie uncached GATT services/characteristics;
+- Device Name `2A00` musi być dokładnie `BLEAPP_C77D_V217`;
+- wymagany jest profil `FFE0` z `FFE1` (Read/Notify/Write) i `FFE2` (Write), ale oficjalny session command channel to **FFE1**;
+- po 1500 ms settle uruchamiane są FFE1 notifications, po kolejnych 200 ms wysyłany jest wyłącznie connect handshake `0xAB` przez `WriteWithResponse`;
+- bridge czeka maksymalnie 6000 ms na zaszyfrowaną odpowiedź `0x8B`, parsuje firmware, `bufferMax`, `dataFormatType`, `activateType` i parametry sesji;
+- klucze sesyjne są wyprowadzane zgodnie z potwierdzonym AES-CTR, ale nie są zapisywane do logów ani `ble-session-summary.json`;
+- authentication LaserOS `0xB0/0xB1` nadal pozostaje **trace-only** i nie jest fałszowane.
 
 ## Twarde invariants bezpieczeństwa
 
-Domyślna konfiguracja 0.6.0 wymusza:
+Domyślna konfiguracja wymusza:
 
 ```text
 physicalOutput=false
@@ -25,7 +29,9 @@ allowSyntheticAuthentication=false
 interlockBypass=false
 ```
 
-FullBridge emuluje wyłącznie warstwę programową urządzenia. Nie wysyła vendor payloadów do fizycznego CUBE 7 i nie obchodzi E-stop/interlock.
+`allowBleWrites=false` oznacza brak dowolnych komend sterujących BLE. 0.6.1 ma jedną wąską, stałą operację sesyjną: potwierdzony connect `0xAB` na FFE1 z `WriteWithResponse`. Nie wysyła `output on`, ustawień mocy, parametrów pracy ani komend FFE2. Nie omija aktywacji, interlocka ani E-stop.
+
+Jeżeli odpowiedź BLE zgłasza `activateType != 1`, sesja jest odrzucana. Bridge nie próbuje zmieniać ani obchodzić stanu aktywacji.
 
 ## Zweryfikowany LaserOS
 
@@ -38,7 +44,9 @@ SHA-256:
 
 Jeżeli SHA-256 nie pasuje, injection jest blokowane przez preflight.
 
-## Domyślna konfiguracja sieciowa
+## Loopback autoconfig LaserOS
+
+Domyślna sieć:
 
 ```json
 "virtualLaserCube": {
@@ -58,7 +66,7 @@ Jeżeli SHA-256 nie pasuje, injection jest blokowane przez preflight.
 }
 ```
 
-Profil przekazywany do DLL ma postać:
+Profil runtime przekazywany do DLL:
 
 ```text
 mode=loopback
@@ -73,7 +81,7 @@ physicalOutput=0
 syntheticAuthentication=0
 ```
 
-## Przepływ runtime
+Kolejność:
 
 ```text
 Cube7Bridge.exe
@@ -84,20 +92,11 @@ Cube7Bridge.exe
   5. inject LaserOSHook.dll
   6. hook settle barrier
   7. ResumeThread LaserOS.exe
-
-LaserOS destination :45456/:45457/:45458
-             |
-             | Winsock destination rewrite
-             v
-127.0.0.1:45456/:45457/:45458
-             |
-             v
-      Cube7Bridge.exe
 ```
 
-Jeżeli LaserOS próbuje lokalnie zrobić `bind()` na canonical portach LaserCube, hook zmienia lokalny port na `0`, dzięki czemu Windows przydziela realny port ephemeral. Pozwala to serwerowi i klientowi działać na tym samym komputerze bez kolizji portów.
+LaserOS wysyłający ruch na canonical porty LaserCube jest kierowany przez hook do realnego serwera localhost. Lokalny `bind()` klienta na `45456/45457/45458` jest zamieniany na port `0`, więc Windows przydziela port ephemeral i nie dochodzi do kolizji z serwerem.
 
-## Sekwencja discovery
+## Network discovery i pozostały etap auth
 
 ```text
 LaserOS -> UDP 45456: 27
@@ -107,24 +106,81 @@ LaserOS -> UDP 45457: 77
 Server  ->             64-byte FULL_INFO
 ```
 
-Dalsze komendy `0x78`, `0x80`, `0x8A` i `0xA9` obsługuje realny `VirtualLaserCubeServer`. `0x80` zmienia tylko stan wirtualny; `physicalOutputEnabled` pozostaje zawsze `false`.
+Serwer obsługuje także `0x78`, `0x80`, `0x8A` i `0xA9`. `0x80` zmienia wyłącznie stan wirtualny; `physicalOutputEnabled` pozostaje zawsze `false`.
+
+Publiczny `libLaserdockCore` przenosi urządzenie z listy inicjalizacyjnej do aktywnej dopiero po ukończeniu własnej sekwencji security/auth. Dlatego `NO LASER` może nadal pozostać, jeżeli LaserOS dochodzi do `0xB0/0xB1`, ale nie otrzymuje prawidłowej odpowiedzi security. 0.6.1 celowo nie generuje sztucznego `AUTH OK`.
+
+## Oficjalna sesja BLE z 321.zip
+
+Target:
+
+```text
+Address: E4:66:E5:D2:6E:38
+Name:    BLEAPP_C77D_V217
+Service: 0000ffe0-0000-1000-8000-00805f9b34fb
+FFE1:    Read / WriteWithoutResponse / Write / Notify
+FFE2:    WriteWithoutResponse / Write
+```
+
+Sekwencja runtime:
+
+```text
+CONNECT_UNPAIRED
+SETTLE_1500MS
+READ_DEVICE_NAME_UNCACHED
+VALIDATE_GATT_UNCACHED
+SUBSCRIBE_FFE1_NOTIFY
+SETTLE_200MS
+WRITE_FFE1_WITH_RESPONSE_0xAB
+WAIT_0x8B_6000MS
+BLE_SESSION READY
+```
+
+Handshake używa AES-128 CTR zgodnego z działającym projektem `321.zip`. Po poprawnym `0x8B` bridge waliduje m.in.:
+
+```text
+status == 0
+appCompany == CubeLaserTemeiAI
+activateType == 1
+47 < bufferMax <= 512
+dataFormatType in 0..4
+```
+
+Publiczne parametry są zapisywane do:
+
+```text
+captures/<timestamp>/ble-session-summary.json
+```
+
+Plik nie zawiera `deviceKey`, `deviceSecret`, `productKey`, klucza AES ani IV.
+
+## Oczekiwany status po uruchomieniu
+
+```text
+LASEROS_PREFLIGHT    OK
+LOOPBACK_SERVER      OK
+LASEROS_HOOK         OK
+BLE_TRANSPORT        OK
+BLE_SESSION          READY  fwCPU=... bufferMax=... dataFormat=... activate=1
+BLE_PROTOCOL         OFFICIAL-SESSION
+DISCOVERY_0x27       OK
+FULL_INFO_0x77       OK
+AUTH_B0_B1           WAITING / ACTIVE
+PHYSICAL_OUTPUT      DISABLED
+```
+
+Jeżeli `BLE_SESSION=READY`, ale LaserOS nadal pokazuje `NO LASER`, najważniejszy jest wtedy stan `DISCOVERY_0x27`, `FULL_INFO_0x77` i `AUTH_B0_B1`. To rozdziela problem fizycznego transportu CUBE od wewnętrznej inicjalizacji urządzenia sieciowego w LaserOS.
 
 ## Renderer i diagnostyka
 
-Renderer tap działa niezależnie od fizycznego sprzętu. Przechwycone punkty są normalizowane do:
+Renderer tap nadal działa niezależnie od fizycznego sprzętu. Przechwycone punkty są normalizowane diagnostycznie do:
 
 ```text
 X,Y   = 0..4095
 R,G,B = 0..4095
 ```
 
-Podgląd diagnostyczny:
-
-```text
-captures/<timestamp>/renderer-preview.svg
-```
-
-Stan i capture:
+Typowe pliki:
 
 ```text
 captures/<timestamp>/
@@ -137,23 +193,9 @@ captures/<timestamp>/
   virtual-device-state.json
   virtual-lasercube-*.ndjson
   ble-*.ndjson
-  ble-protocol-trace.ndjson
+  ble-session-summary.json
   support-bundle.zip
 ```
-
-## BLE CUBE 7
-
-Potwierdzony target:
-
-```text
-Address: E4:66:E5:D2:6E:38
-Name:    BLEAPP_C77D_V217
-Service: 0000ffe0-0000-1000-8000-00805f9b34fb
-FFE1:    Read / WriteWithoutResponse / Write / Notify
-FFE2:    WriteWithoutResponse / Write
-```
-
-BLE pozostaje pasywne: subskrypcja FFE1 jest dozwolona, ale vendor payload writes są wyłączone.
 
 ## Uruchomienie
 
@@ -161,15 +203,6 @@ Rozpakuj release do pustego katalogu i uruchom:
 
 ```bat
 start-full.cmd
-```
-
-Oczekiwane kluczowe wpisy startowe:
-
-```text
-Cube7 LaserOS Full Bridge 0.6.0 LOOPBACK-AUTOCONFIG
-[loopback] real UDP server ready at 127.0.0.1 ports=45456/45457/45458
-[loopback] injection profile armed: destination rewrite + client bind collision avoidance; in-process protocol responder=OFF
-[early] suspended-launch injector started; LaserOS will resume only after LaserOSHook.dll is loaded.
 ```
 
 Dostępne tryby:
@@ -180,16 +213,19 @@ start-trace.cmd
 start-ble.cmd
 ```
 
+`start-ble.cmd` pozwala osobno zweryfikować `BLE_TRANSPORT` i `BLE_SESSION` bez uruchamiania LaserOS.
+
 ## CI / self-test
 
-Windows CI sprawdza między innymi:
+Windows CI sprawdza:
 
-- model protokołu `0x27/0x77/0x78/0x80/0x8A/0xA9`;
-- realny localhost UDP round-trip;
-- parser profilu loopback;
-- destination rewrite do `127.0.0.1`;
-- remap canonical client bind do realnego portu ephemeral;
-- injected-loopback probe uruchamiany przez `Cube7Injector.exe`;
-- wymagane pliki runtime;
-- bezpieczne wartości konfiguracji;
-- zawartość finalnego ZIP-a.
+- realny localhost UDP round-trip i injected loopback routing;
+- destination rewrite i client-bind collision avoidance;
+- `0x27/0x77/0x78/0x80/0x8A/0xA9` virtual network protocol;
+- deterministyczny wektor `0xAB` z `321.zip`;
+- zgodność AES-CTR encrypt/decrypt;
+- parser i walidację `0x8B`;
+- wyprowadzenie session key/IV;
+- politykę `unpaired + uncached + FFE1 write/notify`;
+- dokładną sekwencję runtime i redakcję sekretów;
+- wymagane pliki PE, bezpieczne ustawienia i zawartość finalnego ZIP-a.
