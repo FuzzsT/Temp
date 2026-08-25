@@ -6,6 +6,9 @@ namespace Cube7Bridge;
 public sealed class VirtualLaserCubeConfig
 {
     public bool Enabled { get; set; } = true;
+    // The external UDP responder is diagnostic/test-only on a machine running LaserOS,
+    // because LaserOS itself may bind the LaserCube command port. The injected hook is primary.
+    public bool NetworkServerEnabled { get; set; } = false;
     public string BindAddress { get; set; } = "0.0.0.0";
     public int AlivePort { get; set; } = 45456;
     public int CommandPort { get; set; } = 45457;
@@ -49,9 +52,9 @@ public static class VirtualLaserCubeProtocol
         ushort bufferSize = checked((ushort)Math.Clamp(cfg.BufferSize, 0, ushort.MaxValue));
         BinaryPrimitives.WriteUInt16LittleEndian(response.AsSpan(19, 2), bufferFree);
         BinaryPrimitives.WriteUInt16LittleEndian(response.AsSpan(21, 2), bufferSize);
-        response[23] = 100; // virtual battery / availability
-        response[24] = 25;  // benign virtual temperature
-        response[25] = 3;   // documented Wi-Fi connection type
+        response[23] = 100;
+        response[24] = 25;
+        response[25] = 3;
         Serial.CopyTo(response, 26);
         response[32] = 127;
         response[33] = 0;
@@ -75,36 +78,29 @@ public static class VirtualLaserCubeProtocol
         {
             case 0x77:
                 return new VirtualLaserCubeReply(BuildFullInfo(cfg, state), "get_full_info");
-
             case 0x78:
                 if (payload.Length >= 2) state.BufferResponseEnabled = payload[1] != 0;
                 return new VirtualLaserCubeReply([0x78], "set_buffer_response");
-
             case 0x8A:
             {
                 ushort free = checked((ushort)Math.Clamp(state.BufferFree, 0, ushort.MaxValue));
                 return new VirtualLaserCubeReply([0x8A, 0x00, (byte)(free & 0xFF), (byte)(free >> 8)], "get_buffer_free");
             }
-
             case 0x80:
                 if (payload.Length >= 2) state.OutputRequested = payload[1] != 0;
                 return new VirtualLaserCubeReply([0x80], "set_output_virtual_only");
-
             case 0xA9:
             {
                 if (payload.Length < 4) return new VirtualLaserCubeReply(null, "sample_data_short");
                 state.LastMessageNumber = payload[2];
                 state.LastFrameNumber = payload[3];
                 state.LastPointCount = Math.Max(0, (payload.Length - 4) / 10);
-                // Virtual sink drains immediately so LaserOS never waits for physical DAC capacity.
                 state.BufferFree = cfg.BufferSize;
                 if (!state.BufferResponseEnabled)
                     return new VirtualLaserCubeReply(null, "sample_data", state.LastPointCount);
-
                 ushort free = checked((ushort)Math.Clamp(state.BufferFree, 0, ushort.MaxValue));
                 return new VirtualLaserCubeReply([0xA9, (byte)(free & 0xFF), (byte)(free >> 8)], "sample_data", state.LastPointCount);
             }
-
             default:
                 return new VirtualLaserCubeReply(null, $"unknown_0x{payload[0]:X2}");
         }
