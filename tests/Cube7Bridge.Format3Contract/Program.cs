@@ -93,7 +93,6 @@ finally
     try { Directory.Delete(tempDir, true); } catch { }
 }
 
-// RED contract for the v26-confirmed AD/A5/85 transport envelope.
 var official = asm.GetType("Cube7Bridge.CubeOfficialProtocol");
 Require(official is not null, "CubeOfficialProtocol type is missing");
 var buildTransfer = official!.GetMethod(
@@ -126,4 +125,43 @@ Require((ushort)ackType.GetProperty("Address")!.GetValue(ack)! == 0x1234, "ACK a
 Require((byte)ackType.GetProperty("Status")!.GetValue(ack)! == 0, "ACK status mismatch");
 Require((bool)ackType.GetProperty("IsSuccess")!.GetValue(ack)!, "ACK status 0 must be success");
 
-Console.WriteLine("FORMAT3 CONTRACT PASS: palette=250, type3=6B/point, dry-run artifacts, v26 AD/A5/85 envelope");
+// RED contract for plaintext transport capture; this must remain dry-run only.
+var transportCaptureType = asm.GetType("Cube7Bridge.CubeTransportDryRunCapture");
+Require(transportCaptureType is not null, "CubeTransportDryRunCapture type is missing");
+var transportCtor = transportCaptureType!.GetConstructor([typeof(string), typeof(int), typeof(int)]);
+Require(transportCtor is not null, "CubeTransportDryRunCapture(string,int,int) constructor is missing");
+var transportWrite = transportCaptureType.GetMethod("Write", BindingFlags.Public | BindingFlags.Instance, [typeof(RendererFrame), typeof(bool)]);
+Require(transportWrite is not null, "CubeTransportDryRunCapture.Write(RendererFrame,bool) is missing");
+
+var transportDir = Path.Combine(Path.GetTempPath(), "cube7-transport-contract-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(transportDir);
+try
+{
+    var transportCapture = transportCtor!.Invoke([transportDir, 244, 3]);
+    transportWrite!.Invoke(transportCapture, [frame, false]);
+    (transportCapture as IDisposable)?.Dispose();
+
+    var transportRawPath = Path.Combine(transportDir, "cube-transport-plaintext.bin");
+    var transportSummaryPath = Path.Combine(transportDir, "cube-transport-plaintext.ndjson");
+    Require(File.Exists(transportRawPath), "cube-transport-plaintext.bin was not created");
+    Require(File.Exists(transportSummaryPath), "cube-transport-plaintext.ndjson was not created");
+
+    var transportRaw = File.ReadAllBytes(transportRawPath);
+    Require(transportRaw.Length > 8, "transport raw file is unexpectedly short");
+    int firstTransportLength = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(transportRaw.AsSpan(0, 4)));
+    Require(firstTransportLength <= 244, "transport frame exceeds configured bufferMax");
+    Require(transportRaw[4] == 0xAD && transportRaw[5] == 0x12 && transportRaw[6] == 0x34, "transport dry-run must begin with AD/1234");
+
+    var transportLine = File.ReadLines(transportSummaryPath).Single();
+    Require(transportLine.Contains("\"bufferMax\":244"), "transport ndjson bufferMax missing");
+    Require(transportLine.Contains("\"dataFormatType\":3"), "transport ndjson dataFormatType missing");
+    Require(transportLine.Contains("\"encrypted\":false"), "transport ndjson must declare encrypted=false");
+    Require(transportLine.Contains("\"dryRun\":true"), "transport ndjson must declare dryRun=true");
+    Require(transportLine.Contains("\"physicalOutput\":false"), "transport ndjson must declare physicalOutput=false");
+}
+finally
+{
+    try { Directory.Delete(transportDir, true); } catch { }
+}
+
+Console.WriteLine("FORMAT3 CONTRACT PASS: palette=250, type3=6B/point, dry-run format3 + AD/A5/85 transport artifacts");
