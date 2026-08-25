@@ -34,8 +34,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item .\bin (Join-Path $stage 'bin') -Recurse -Force
           Copy-Item .\controlcenter-bin\Cube7ControlCenter.exe (Join-Path $stage 'Cube7ControlCenter.exe') -Force
-          Copy-Item .\start-full.cmd,.\start-trace.cmd,.\start-ble.cmd,.\README.md,.\config.json,.\VERSION.json -Destination $stage -Force
-          Set-Content -Path (Join-Path $stage 'start-control-center.cmd') -Value '@echo off`r`nstart "" "%~dp0Cube7ControlCenter.exe"`r`n'
+          Copy-Item .\start-control-center.cmd,.\start-full.cmd,.\start-trace.cmd,.\start-ble.cmd,.\README.md,.\config.json,.\config.diagnostic.json,.\VERSION.json -Destination $stage -Force
           Copy-Item .\docs (Join-Path $stage 'docs') -Recurse -Force
           Copy-Item .\protocols (Join-Path $stage 'protocols') -Recurse -Force
           Copy-Item .\scripts (Join-Path $stage 'scripts') -Recurse -Force
@@ -49,6 +48,7 @@ jobs:
           Expand-Archive .\Cube7-LaserOS-FullBridge-0.5.0-REV-B-win-x64.zip -DestinationPath $tmp
           .\verify-release.ps1 -BinDir (Join-Path $tmp 'bin')
           if (!(Test-Path (Join-Path $tmp 'Cube7ControlCenter.exe'))) { throw 'Cube7ControlCenter.exe missing from package' }
+          if (!(Test-Path (Join-Path $tmp 'config.diagnostic.json'))) { throw 'config.diagnostic.json missing from package' }
           & (Join-Path $tmp 'Cube7ControlCenter.exe') --self-test
       - uses: actions/upload-artifact@v4
         with:
