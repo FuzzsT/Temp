@@ -18,7 +18,8 @@ enum class HookApi : uint8_t {
     Send = 5,
     Recv = 6,
     WSASendTo = 7,
-    WSARecvFrom = 8
+    WSARecvFrom = 8,
+    RendererFrame = 20
 };
 
 #pragma pack(push, 1)
@@ -34,6 +35,25 @@ struct HookRecordHeader {
     uint8_t address[16];
     uint32_t payloadLength;
 };
+
+static constexpr uint32_t C7RF_MAGIC = 0x4D524652; // bytes: 'RFRM'
+static constexpr uint16_t C7RF_VERSION = 1;
+struct RendererFrameWireHeader {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t flags;
+    int32_t rate;
+    uint32_t pointCount;
+    uint64_t rendererId;
+};
+struct RendererPointWire {
+    float x;
+    float y;
+    uint32_t color;
+    int32_t param;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(HookRecordHeader) == 44, "HookRecordHeader size mismatch");
+static_assert(sizeof(RendererFrameWireHeader) == 24, "RendererFrameWireHeader size mismatch");
+static_assert(sizeof(RendererPointWire) == 16, "RendererPointWire size mismatch");
