@@ -11,6 +11,8 @@ public sealed class BridgeConfig
     public bool AllowBleWrites { get; set; } = false;
     public string CaptureDirectory { get; set; } = "captures";
     public EarlyHookConfig EarlyHook { get; set; } = new();
+    public PreflightConfig Preflight { get; set; } = new();
+    public HardeningConfig Hardening { get; set; } = new();
     public BleConfig Ble { get; set; } = new();
     public VirtualLaserCubeConfig VirtualLaserCube { get; set; } = new();
 
@@ -20,6 +22,20 @@ public sealed class BridgeConfig
         public bool RestartRunningLaserOs { get; set; } = true;
         public int GracefulCloseTimeoutSeconds { get; set; } = 10;
         public string? LaserOsExePath { get; set; }
+    }
+
+    public sealed class PreflightConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public bool RequireVerifiedSha256 { get; set; } = true;
+        public string? ExpectedLaserOsSha256 { get; set; } = "21799b2b9c651be87d69a4d977fa09ef14b8ce22de13499a7974669c36991c0c";
+    }
+
+    public sealed class HardeningConfig
+    {
+        public int StatusIntervalSeconds { get; set; } = 5;
+        public bool WriteDryRunTranslation { get; set; } = true;
+        public bool AutomaticSupportBundle { get; set; } = true;
     }
 
     public sealed class BleConfig
