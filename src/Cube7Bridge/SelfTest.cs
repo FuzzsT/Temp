@@ -12,8 +12,9 @@ public static class SelfTest
         {
             ProtocolModelTests();
             BluetoothAddressTests();
+            HandshakeTrackerTests();
             await UdpServerTestsAsync();
-            Console.WriteLine("SELFTEST PASS: 0x27 discovery + protocol + UDP virtual device + BLE target parser; physical-output=DISABLED");
+            Console.WriteLine("SELFTEST PASS: 0x27 discovery + protocol + passive B0/B1 auth trace + UDP virtual device + BLE target parser; physical-output=DISABLED");
             return 0;
         }
         catch (Exception ex)
@@ -28,8 +29,6 @@ public static class SelfTest
         var cfg = new VirtualLaserCubeConfig { BufferSize = 6000, DacRate = 30000, MaxDacRate = 30000, ModelName = "LaserCube Virtual CUBE7" };
         var state = new VirtualLaserCubeState { BufferFree = cfg.BufferSize };
 
-        // LaserOS/libLaserdockCore discovery starts with 0x27 on UDP 45456
-        // and accepts a device only after the exact two-byte response 27 00.
         var alive = VirtualLaserCubeProtocol.HandleCommand([0x27], state, cfg);
         Require(alive.Response is [0x27, 0x00], "0x27 alive response must be 27 00");
 
@@ -67,6 +66,39 @@ public static class SelfTest
         ulong parsed = BridgeConfig.ParseBluetoothAddress(expected);
         Require(parsed == 0xE466E5D26E38UL, "BLE exact MAC parse");
         Require(BridgeConfig.FormatBluetoothAddress(parsed) == expected, "BLE exact MAC round-trip");
+    }
+
+    private static void HandshakeTrackerTests()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "Cube7Bridge-handshake-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var tracker = new LaserCubeHandshakeTracker(dir);
+
+        HookRecord R(byte[] payload) => new(1, 1, 1234, (ulong)DateTime.UtcNow.ToFileTimeUtc(), 2, 45457, [127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], payload);
+
+        Require(tracker.Observe(R([0x27]))?.Contains("DISCOVERY_REQUEST") == true, "handshake discovery request");
+        Require(tracker.Observe(R([0x27, 0x00]))?.Contains("DISCOVERY_ACCEPTED") == true, "handshake discovery accepted");
+        Require(tracker.Observe(R([0x77]))?.Contains("FULL_INFO_REQUEST") == true, "handshake full info request");
+
+        var fullInfo = new byte[64];
+        fullInfo[0] = 0x77;
+        Require(tracker.Observe(R(fullInfo))?.Contains("FULL_INFO_ACCEPTED") == true, "handshake full info accepted");
+
+        var authRequest = new byte[50];
+        authRequest[0] = 0xB0;
+        Require(tracker.Observe(R(authRequest))?.Contains("AUTH_REQUEST") == true, "handshake auth request");
+        Require(tracker.Observe(R([0xB0, 0x00]))?.Contains("AUTH_REQUEST_ACK") == true, "handshake auth ack");
+        Require(tracker.Observe(R([0xB1]))?.Contains("AUTH_RESPONSE_QUERY") == true, "handshake auth response query");
+
+        var authResponse = new byte[38];
+        authResponse[0] = 0xB1;
+        Require(tracker.Observe(R(authResponse))?.Contains("AUTH_RESPONSE_CAPTURED") == true, "handshake auth response captured");
+        Require(tracker.Observe(R([0x82, 0x30, 0x75, 0x00, 0x00]))?.Contains("POST_AUTH_DEVICE_TRAFFIC") == true, "handshake post-auth traffic");
+
+        string summary = Path.Combine(dir, "handshake-summary.ndjson");
+        Require(File.Exists(summary), "handshake summary file");
+        Require(File.ReadLines(summary).Count() >= 9, "handshake summary rows");
+        Directory.Delete(dir, true);
     }
 
     private static async Task UdpServerTestsAsync()
