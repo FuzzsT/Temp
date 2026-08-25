@@ -15,6 +15,7 @@ public sealed class BridgeConfig
     public HardeningConfig Hardening { get; set; } = new();
     public BleConfig Ble { get; set; } = new();
     public VirtualLaserCubeConfig VirtualLaserCube { get; set; } = new();
+    public VirtualDeviceConfig VirtualDevice { get; set; } = new();
 
     public sealed class EarlyHookConfig
     {
@@ -44,6 +45,17 @@ public sealed class BridgeConfig
         public bool AutoConnect { get; set; } = true;
         public bool SubscribeNotifications { get; set; } = true;
         public string? Address { get; set; }
+    }
+
+    public sealed class VirtualDeviceConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public bool Network { get; set; } = true;
+        public string UsbHid { get; set; } = "trace-first";
+        public bool PhysicalOutput { get; set; } = false;
+        public bool AllowSyntheticAuthentication { get; set; } = false;
+        public bool WriteDeviceStateReport { get; set; } = true;
+        public bool WriteRendererPreview { get; set; } = true;
     }
 
     public static BridgeConfig Load(string path)
