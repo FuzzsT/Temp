@@ -46,7 +46,10 @@ if ([string]::IsNullOrWhiteSpace([string]$config.preflight.expectedLaserOsSha256
 }
 if ($config.hardening.writeDryRunTranslation -ne $true) { Write-Error 'HARDENING_FAIL: dry-run translation must be enabled'; exit 1 }
 if ($config.hardening.automaticSupportBundle -ne $true) { Write-Error 'HARDENING_FAIL: automatic support bundle must be enabled'; exit 1 }
+if ($config.ble.autoConnect -ne $true) { Write-Error 'BLE_TRACE_FAIL: ble.autoConnect must be true for passive GATT inventory'; exit 1 }
+if ($config.ble.subscribeNotifications -ne $true) { Write-Error 'BLE_TRACE_FAIL: ble.subscribeNotifications must be true for passive FFE1 trace'; exit 1 }
 Write-Host '[OK] safety defaults: physical output path disabled, BLE payload writes disabled'
+Write-Host '[OK] BLE UART trace: auto-connect + notification subscription enabled; no FFE2 payload writes'
 Write-Host '[OK] hardened defaults: SHA preflight + dry-run translator + support bundle enabled'
 Write-Host 'FULLBRIDGE_READY=1'
 exit 0
