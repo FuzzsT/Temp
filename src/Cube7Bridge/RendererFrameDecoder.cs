@@ -28,10 +28,11 @@ public static class RendererFrameDecoder
         uint count = BinaryPrimitives.ReadUInt32LittleEndian(p[12..16]);
         ulong rendererId = BinaryPrimitives.ReadUInt64LittleEndian(p[16..24]);
         if (count > 65500) return false;
-        int expected = checked(HeaderSize + (int)count * PointSize);
+        int pointCount = checked((int)count);
+        int expected = checked(HeaderSize + pointCount * PointSize);
         if (record.Payload.Length != expected) return false;
 
-        var points = new RendererPoint[count];
+        var points = new RendererPoint[pointCount];
         int off = HeaderSize;
         for (int i = 0; i < points.Length; i++, off += PointSize)
         {
