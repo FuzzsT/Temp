@@ -4,10 +4,14 @@ namespace Cube7Bridge;
 
 public sealed class HookCaptureServer : IDisposable
 {
+    private const int VerifiedBufferMax = 244;
+    private const int VerifiedDataFormatType = 3;
+
     private readonly CaptureWriter _writer;
     private readonly LaserCubeHandshakeTracker _handshake;
     private readonly RendererFrameCapture _renderer;
     private readonly CubeFormat3Capture _format3;
+    private readonly CubeTransportDryRunCapture _transport;
     private long _rendererFrames;
     private bool _disposed;
 
@@ -17,6 +21,7 @@ public sealed class HookCaptureServer : IDisposable
         _handshake = new LaserCubeHandshakeTracker(writer.DirectoryPath);
         _renderer = new RendererFrameCapture(writer.DirectoryPath);
         _format3 = new CubeFormat3Capture(writer.DirectoryPath);
+        _transport = new CubeTransportDryRunCapture(writer.DirectoryPath, VerifiedBufferMax, VerifiedDataFormatType);
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -33,7 +38,10 @@ public sealed class HookCaptureServer : IDisposable
             Console.WriteLine($"[renderer] frame summary: {_renderer.SummaryPath}");
             Console.WriteLine($"[format3] dry-run summary: {_format3.SummaryPath}");
             Console.WriteLine($"[format3] dry-run binary: {_format3.RawPath}");
-            Console.WriteLine("[renderer] tap is capture-only; physical output remains OFF.");
+            Console.WriteLine($"[transport] plaintext dry-run summary: {_transport.SummaryPath}");
+            Console.WriteLine($"[transport] plaintext dry-run binary: {_transport.RawPath}");
+            Console.WriteLine($"[transport] verified runtime profile: bufferMax={VerifiedBufferMax} dataFormatType={VerifiedDataFormatType}");
+            Console.WriteLine("[renderer] tap is capture-only; physical output remains OFF and no BLE write is performed.");
             try
             {
                 var header = new byte[HookRecord.HeaderSize];
@@ -51,9 +59,10 @@ public sealed class HookCaptureServer : IDisposable
                     {
                         _renderer.Write(record, frame);
                         _format3.Write(frame, blackout: false);
+                        _transport.Write(frame, invertY: false);
                         long n = Interlocked.Increment(ref _rendererFrames);
                         if (n <= 5 || n % 60 == 0)
-                            Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X} format3=dry-run");
+                            Console.WriteLine($"[renderer] frame={n} points={frame.PointCount} rate={frame.Rate} flags=0x{frame.Flags:X} format3+AD/A5=dry-run");
                         continue;
                     }
 
@@ -107,5 +116,6 @@ public sealed class HookCaptureServer : IDisposable
         _disposed = true;
         _renderer.Dispose();
         _format3.Dispose();
+        _transport.Dispose();
     }
 }
