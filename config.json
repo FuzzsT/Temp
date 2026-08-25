@@ -31,8 +31,8 @@
   },
   "virtualLaserCube": {
     "enabled": true,
-    "networkServerEnabled": false,
-    "bindAddress": "0.0.0.0",
+    "networkServerEnabled": true,
+    "bindAddress": "127.0.0.1",
     "alivePort": 45456,
     "commandPort": 45457,
     "dataPort": 45458,
