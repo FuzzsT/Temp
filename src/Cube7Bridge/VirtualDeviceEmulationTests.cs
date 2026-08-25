@@ -19,6 +19,22 @@ public static class VirtualDeviceEmulationTests
         Require(plan.WriteInjectionProfile, "loopback plan writes injection profile");
         Require(!plan.UseInjectedResponder, "loopback plan disables in-process protocol responder");
 
+        bool rejectedNonLoopback = false;
+        try
+        {
+            LoopbackRuntimePlan.From(new VirtualLaserCubeConfig
+            {
+                Enabled = true,
+                NetworkServerEnabled = true,
+                BindAddress = "0.0.0.0"
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            rejectedNonLoopback = true;
+        }
+        Require(rejectedNonLoopback, "runtime plan must reject non-loopback bind before server startup");
+
         var cfg = new BridgeConfig.VirtualDeviceConfig
         {
             Enabled = true,
